@@ -44,7 +44,12 @@ app.post("/api/gemini/analyze", async (req, res) => {
               },
               {
                 text:
-                  "你是繁體中文業務助理。請閱讀這張 email 或訊息截圖，整理成一筆待辦任務。不要捏造不存在的期限或聯絡資訊。任務標題要是可執行的動作，description 保留客戶需求、產品、規格、報價、附件等上下文，next_action 寫下一步該做什麼。",
+                  "你是繁體中文業務待辦整理助理。請閱讀截圖，萃取出一筆可執行的待辦任務，所有欄位均需精簡：\n" +
+                  "- title：20字內，以動詞開頭的可執行動作，需包含核心需求或產品關鍵字（例：向XX詢問TYPE-C Connector朝上規格報價）\n" +
+                  "- requester / company / contact：直接填名稱或資訊，無則留空字串\n" +
+                  "- due_time_guess：若有明確期限填日期，否則留空字串\n" +
+                  "- confidence_note：10字內，標注不確定的推斷，否則留空字串\n" +
+                  "嚴禁捏造資訊。所有欄位禁止寫成完整長句，只留關鍵詞或短語。",
               },
             ],
           },
@@ -58,12 +63,10 @@ app.post("/api/gemini/analyze", async (req, res) => {
               requester: { type: "string" },
               company: { type: "string" },
               contact: { type: "string" },
-              description: { type: "string" },
-              next_action: { type: "string" },
               due_time_guess: { type: "string" },
               confidence_note: { type: "string" },
             },
-            required: ["title", "requester", "company", "contact", "description", "next_action", "due_time_guess", "confidence_note"],
+            required: ["title", "requester", "company", "contact", "due_time_guess", "confidence_note"],
           },
         },
       }),
