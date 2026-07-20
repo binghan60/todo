@@ -1,0 +1,14 @@
+{
+  "name": "gemini-screenshot-todo-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../.env index.mjs",
+    "serve": "node --env-file-if-exists=../.env index.mjs",
+    "check": "node --check index.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
