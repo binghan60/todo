@@ -3,12 +3,19 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 type TodoStatus = "pending" | "in_progress" | "done";
 
+type ProgressLog = {
+  id: string;
+  content: string;
+  createdAt: string;
+};
+
 type Todo = {
   id: string;
   title: string;
-  dueDate: string;
   status: TodoStatus;
   createdAt: string;
+  progressLogs: ProgressLog[];
+  closedAt?: string;
   sourceImage?: string;
   requester?: string;
   company?: string;
@@ -30,13 +37,10 @@ type DraftItem = {
   requester: string;
   company: string;
   contact: string;
-  dueDate: string;
   sourceImage: string;
   imageUrl: string;
   confidenceNote: string;
 };
-
-type DueTone = "overdue" | "soon" | "normal";
 
 type BrowserFileHandle = {
   kind: "file";
@@ -52,6 +56,11 @@ type BrowserDirectoryHandle = {
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
 };
 
+type StoredTodo = Omit<Todo, "status" | "progressLogs"> & {
+  status?: TodoStatus | "follow_up";
+  progressLogs?: ProgressLog[];
+};
+
 type WindowWithPicker = Window & {
   showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
 };
@@ -64,24 +73,22 @@ const DIRECTORY_HANDLE_KEY = "screenshot-directory";
 const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
 
-type ColumnKey = "title" | "due" | "requester" | "company" | "contact" | "source" | "created" | "status" | "action";
+type ColumnKey = "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
 
 const defaultColumnWidths: Record<ColumnKey, number> = {
   title: 260,
-  due: 180,
   requester: 100,
   company: 120,
   contact: 130,
-  source: 160,
   created: 150,
   status: 140,
-  action: 90,
+  action: 120,
 };
 
 const statusColumns: Array<{ id: TodoStatus; label: string; hint: string; icon: string }> = [
-  { id: "pending", label: "待辦", hint: "等候處理", icon: "mdi-clock-outline" },
-  { id: "in_progress", label: "進行中", hint: "正在追蹤", icon: "mdi-rocket-launch" },
-  { id: "done", label: "完成", hint: "已收尾", icon: "mdi-check-circle" },
+  { id: "pending", label: "待辦", hint: "尚未開始處理", icon: "mdi-clock-outline" },
+  { id: "in_progress", label: "處理中", hint: "已有處理進度", icon: "mdi-progress-pencil" },
+  { id: "done", label: "結案", hint: "已完成並結案", icon: "mdi-archive-check-outline" },
 ];
 
 const todos = ref<Todo[]>([]);
@@ -101,11 +108,14 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const showSettingsDialog = ref(false);
 const showAddTaskDialog = ref(false);
 const showDeleteConfirmDialog = ref(false);
+const showProgressDialog = ref(false);
 const todoIdToDelete = ref<string | null>(null);
+const todoIdForProgress = ref<string | null>(null);
 
 // Manual add todo form fields
 const newTitle = ref("");
-const newDueDate = ref("");
+const progressText = ref("");
+const selectedProgressTodo = computed(() => todos.value.find((item) => item.id === todoIdForProgress.value) ?? null);
 
 const searchQuery = ref("");
 const statusFilter = ref<TodoStatus | "all">("all");
@@ -122,9 +132,6 @@ const totalCount = computed(() => todos.value.length);
 const doneCount = computed(() => countByStatus("done"));
 const inProgressCount = computed(() => countByStatus("in_progress"));
 const pendingCount = computed(() => countByStatus("pending"));
-const overdueCount = computed(
-  () => todos.value.filter((todo) => todo.status !== "done" && dueBadge(todo)?.tone === "overdue").length,
-);
 
 onMounted(() => {
   void loadLocalState();
@@ -150,11 +157,28 @@ watch(autoScan, (enabled) => {
   else stopAutoScan();
 });
 
+function normalizeTodo(todo: StoredTodo): Todo {
+  const progressLogs = Array.isArray(todo.progressLogs) ? todo.progressLogs : [];
+  const status = resolveTodoStatus(todo.status, progressLogs);
+
+  return {
+    ...todo,
+    status,
+    progressLogs,
+  };
+}
+
+function resolveTodoStatus(status: StoredTodo["status"], progressLogs: ProgressLog[]): TodoStatus {
+  if (status === "done") return "done";
+  if (status === "in_progress" || status === "follow_up" || progressLogs.length > 0) return "in_progress";
+  return "pending";
+}
+
 async function loadLocalState() {
   const storedTodos = localStorage.getItem(STORAGE_KEY);
   const storedProcessed = localStorage.getItem(PROCESSED_KEY);
 
-  if (storedTodos) todos.value = JSON.parse(storedTodos) as Todo[];
+  if (storedTodos) todos.value = (JSON.parse(storedTodos) as StoredTodo[]).map(normalizeTodo);
   if (storedProcessed) processedKeys.value = new Set(JSON.parse(storedProcessed) as string[]);
 
   const storedColumnWidths = localStorage.getItem(COLUMN_WIDTHS_KEY);
@@ -418,10 +442,9 @@ function buildDraftItem(draft: AiTaskDraft, sourceImage: string, imageUrl: strin
     requester: draft.requester,
     company: draft.company,
     contact: draft.contact,
-    dueDate: "",
     sourceImage,
     imageUrl,
-    confidenceNote: [draft.due_time_guess ? `期限猜測：${draft.due_time_guess}` : "", draft.confidence_note]
+    confidenceNote: [draft.confidence_note]
       .filter(Boolean)
       .join("　"),
   };
@@ -434,9 +457,9 @@ function confirmDraft(id: string) {
   todos.value.unshift({
     id: draft.id,
     title: draft.title.trim() || "未命名任務",
-    dueDate: draft.dueDate,
     status: "pending",
     createdAt: new Date().toISOString(),
+    progressLogs: [],
     sourceImage: draft.sourceImage,
     requester: draft.requester || undefined,
     company: draft.company || undefined,
@@ -520,26 +543,57 @@ function submitManualTodo() {
   const title = newTitle.value.trim();
   if (!title) return;
 
-  createTodo(title, newDueDate.value);
+  createTodo(title);
   newTitle.value = "";
-  newDueDate.value = "";
   showAddTaskDialog.value = false;
 }
 
-function createTodo(title: string, dueDate = "", sourceImage = "") {
+function createTodo(title: string, sourceImage = "") {
   todos.value.unshift({
     id: crypto.randomUUID(),
     title,
-    dueDate,
     status: "pending",
     createdAt: new Date().toISOString(),
+    progressLogs: [],
     sourceImage,
   });
 }
 
-function updateTodoStatus(todoId: string, status: TodoStatus) {
+function openProgressDialog(todoId: string) {
   const todo = todos.value.find((item) => item.id === todoId);
-  if (todo) todo.status = status;
+  if (!todo || todo.status === "done") return;
+
+  todoIdForProgress.value = todoId;
+  progressText.value = "";
+  showProgressDialog.value = true;
+}
+
+function submitProgressUpdate() {
+  const content = progressText.value.trim();
+  const todo = todos.value.find((item) => item.id === todoIdForProgress.value);
+  if (!content || !todo || todo.status === "done") return;
+
+  todo.progressLogs = [
+    ...(todo.progressLogs ?? []),
+    { id: crypto.randomUUID(), content, createdAt: new Date().toISOString() },
+  ];
+  todo.status = "in_progress";
+  progressText.value = "";
+  todoIdForProgress.value = null;
+  showProgressDialog.value = false;
+}
+
+function closeTodo(todoId: string) {
+  const todo = todos.value.find((item) => item.id === todoId);
+  if (!todo) return;
+
+  todo.status = "done";
+  todo.closedAt = new Date().toISOString();
+}
+
+function latestProgress(todo: Todo) {
+  const logs = todo.progressLogs ?? [];
+  return logs.length ? logs[logs.length - 1] : null;
 }
 
 function removeTodo(todoId: string) {
@@ -583,30 +637,10 @@ function formatCreated(iso: string) {
   });
 }
 
-function dueBadge(todo: Todo): { label: string; tone: DueTone } | null {
-  if (!todo.dueDate) return null;
-
-  const due = new Date(todo.dueDate).getTime();
-  if (Number.isNaN(due)) return null;
-
-  const diffHours = (due - Date.now()) / 36e5;
-  if (diffHours < 0) return { label: "已逾期", tone: "overdue" };
-  if (diffHours <= 24) return { label: "24 小時內", tone: "soon" };
-  return { label: "", tone: "normal" };
-}
-
-function getDueChipColor(todo: Todo) {
-  const badge = dueBadge(todo);
-  if (!badge) return "muted";
-  if (badge.tone === "overdue") return "error";
-  if (badge.tone === "soon") return "warning";
-  return "secondary";
-}
-
 function getStatusIcon(status: TodoStatus) {
   if (status === "pending") return "mdi-clock-outline";
-  if (status === "in_progress") return "mdi-rocket-launch";
-  if (status === "done") return "mdi-check-circle";
+  if (status === "in_progress") return "mdi-progress-pencil";
+  if (status === "done") return "mdi-archive-check-outline";
   return "";
 }
 
@@ -614,11 +648,7 @@ function getStatusColor(status: TodoStatus) {
   if (status === "pending") return "secondary";
   if (status === "in_progress") return "warning";
   if (status === "done") return "success";
-  return "grey";
-}
-
-function formatDue(dueDate: string) {
-  return dueDate.replace("T", " ");
+  return "muted";
 }
 
 async function ensureDirectoryPermission(handle: BrowserDirectoryHandle, request = true) {
@@ -696,14 +726,18 @@ function fileToBase64Payload(file: File) {
         手動新增
       </v-btn>
 
-      <v-btn
-        icon="mdi-cog-outline"
-        variant="outlined"
-        color="muted"
-        class="rounded-lg"
-        @click="showSettingsDialog = true"
-        title="系統設定"
-      ></v-btn>
+      <v-tooltip text="系統設定" location="bottom">
+        <template v-slot:activator="{ props }">
+          <v-btn
+            v-bind="props"
+            icon="mdi-cog-outline"
+            variant="outlined"
+            color="muted"
+            class="rounded-lg"
+            @click="showSettingsDialog = true"
+          ></v-btn>
+        </template>
+      </v-tooltip>
     </v-app-bar>
 
     <v-main class="bg-warm-page">
@@ -726,10 +760,10 @@ function fileToBase64Payload(file: File) {
           <v-card class="rounded-lg border-0 elevation-0" border flat>
             <v-card-text class="d-flex align-center pa-4">
               <v-avatar color="warning-lighten-5" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-rocket-launch" color="warning" size="24"></v-icon>
+                <v-icon icon="mdi-progress-pencil" color="warning" size="24"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-caption text-grey font-weight-bold">進行中</div>
+                <div class="text-caption text-grey font-weight-bold">處理中</div>
                 <div class="text-h5 font-weight-black text-warning mt-1" style="line-height: 1;">{{ inProgressCount }}</div>
               </div>
             </v-card-text>
@@ -738,23 +772,11 @@ function fileToBase64Payload(file: File) {
           <v-card class="rounded-lg border-0 elevation-0" border flat>
             <v-card-text class="d-flex align-center pa-4">
               <v-avatar color="success-lighten-5" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-check-circle" color="success" size="24"></v-icon>
+                <v-icon icon="mdi-archive-check-outline" color="success" size="24"></v-icon>
               </v-avatar>
               <div>
-                <div class="text-caption text-grey font-weight-bold">已完成</div>
+                <div class="text-caption text-grey font-weight-bold">結案件數</div>
                 <div class="text-h5 font-weight-black text-success mt-1" style="line-height: 1;">{{ doneCount }}</div>
-              </div>
-            </v-card-text>
-          </v-card>
-
-          <v-card class="rounded-lg border-0 elevation-0" border flat :color="overdueCount > 0 ? 'error-lighten-5' : undefined">
-            <v-card-text class="d-flex align-center pa-4">
-              <v-avatar :color="overdueCount > 0 ? 'error-lighten-5' : 'secondary-lighten-5'" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-alert-circle" :color="overdueCount > 0 ? 'error' : 'muted'" size="24"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-caption text-grey font-weight-bold">已逾期</div>
-                <div class="text-h5 font-weight-black mt-1" :class="overdueCount > 0 ? 'text-error' : 'text-grey-darken-3'" style="line-height: 1;">{{ overdueCount }}</div>
               </div>
             </v-card-text>
           </v-card>
@@ -787,26 +809,33 @@ function fileToBase64Payload(file: File) {
                   <div class="text-body-2 font-weight-bold text-grey-darken-3 text-truncate max-width-filename" :title="directoryName">
                     {{ directoryName }}
                   </div>
-                  <v-btn 
-                    size="x-small" 
-                    variant="text" 
-                    icon="mdi-pencil-outline" 
-                    color="primary" 
-                    class="ml-1" 
-                    @click="pickDirectory" 
-                    title="重新選擇資料夾"
-                  ></v-btn>
-                  <v-btn 
-                    v-if="directoryHandle"
-                    size="x-small" 
-                    variant="text" 
-                    icon="mdi-sync" 
-                    color="primary" 
-                    class="ml-1" 
-                    :loading="isScanning"
-                    @click="scanLatestImage" 
-                    title="手動掃描資料夾新圖片"
-                  ></v-btn>
+                  <v-tooltip text="重新選擇資料夾" location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-btn 
+                        v-bind="props"
+                        size="x-small" 
+                        variant="text" 
+                        icon="mdi-pencil-outline" 
+                        color="primary" 
+                        class="ml-1" 
+                        @click="pickDirectory"
+                      ></v-btn>
+                    </template>
+                  </v-tooltip>
+                  <v-tooltip v-if="directoryHandle" text="手動掃描資料夾新圖片" location="top">
+                    <template v-slot:activator="{ props }">
+                      <v-btn 
+                        v-bind="props"
+                        size="x-small" 
+                        variant="text" 
+                        icon="mdi-sync" 
+                        color="primary" 
+                        class="ml-1" 
+                        :loading="isScanning"
+                        @click="scanLatestImage"
+                      ></v-btn>
+                    </template>
+                  </v-tooltip>
                 </div>
               </div>
             </div>
@@ -911,18 +940,22 @@ function fileToBase64Payload(file: File) {
             </v-tabs>
 
             <div class="d-flex align-center gap-2">
-              <v-btn
-                variant="outlined"
-                color="muted"
-                size="small"
-                density="comfortable"
-                prepend-icon="mdi-table-column-width"
-                class="font-weight-bold rounded-lg text-none"
-                @click="resetColumnWidths"
-                title="將表格每一欄的寬度回復成預設值"
-              >
-                回復預設欄寬
-              </v-btn>
+              <v-tooltip text="將表格每一欄的寬度回復成預設值" location="top">
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    variant="outlined"
+                    color="muted"
+                    size="small"
+                    density="comfortable"
+                    prepend-icon="mdi-table-column-width"
+                    class="font-weight-bold rounded-lg text-none"
+                    @click="resetColumnWidths"
+                  >
+                    回復預設欄寬
+                  </v-btn>
+                </template>
+              </v-tooltip>
 
               <v-text-field
                 v-model="searchQuery"
@@ -941,11 +974,9 @@ function fileToBase64Payload(file: File) {
           <v-table class="todo-table w-100">
             <colgroup>
               <col :style="{ width: columnWidths.title + 'px' }" />
-              <col :style="{ width: columnWidths.due + 'px' }" />
               <col :style="{ width: columnWidths.requester + 'px' }" />
               <col :style="{ width: columnWidths.company + 'px' }" />
               <col :style="{ width: columnWidths.contact + 'px' }" />
-              <col :style="{ width: columnWidths.source + 'px' }" />
               <col :style="{ width: columnWidths.created + 'px' }" />
               <col :style="{ width: columnWidths.status + 'px' }" />
               <col :style="{ width: columnWidths.action + 'px' }" />
@@ -955,10 +986,6 @@ function fileToBase64Payload(file: File) {
                 <th class="font-weight-bold resizable-th">
                   任務名稱
                   <span class="col-resize-handle" @mousedown="startColumnResize('title', $event)"></span>
-                </th>
-                <th class="font-weight-bold resizable-th">
-                  期限
-                  <span class="col-resize-handle" @mousedown="startColumnResize('due', $event)"></span>
                 </th>
                 <th class="font-weight-bold resizable-th">
                   需求者
@@ -971,10 +998,6 @@ function fileToBase64Payload(file: File) {
                 <th class="font-weight-bold resizable-th">
                   聯絡方式
                   <span class="col-resize-handle" @mousedown="startColumnResize('contact', $event)"></span>
-                </th>
-                <th class="font-weight-bold resizable-th">
-                  來源
-                  <span class="col-resize-handle" @mousedown="startColumnResize('source', $event)"></span>
                 </th>
                 <th class="font-weight-bold resizable-th">
                   新增時間
@@ -1012,16 +1035,6 @@ function fileToBase64Payload(file: File) {
                 </td>
 
                 <td class="align-center">
-                  <v-text-field
-                    v-model="draft.dueDate"
-                    type="datetime-local"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  ></v-text-field>
-                </td>
-
-                <td class="align-center">
                   <v-text-field v-model="draft.requester" placeholder="需求者" variant="outlined" density="compact" hide-details></v-text-field>
                 </td>
 
@@ -1031,21 +1044,6 @@ function fileToBase64Payload(file: File) {
 
                 <td class="align-center">
                   <v-text-field v-model="draft.contact" placeholder="聯絡方式" variant="outlined" density="compact" hide-details></v-text-field>
-                </td>
-
-                <td class="align-center">
-                  <v-chip
-                    size="small"
-                    variant="tonal"
-                    color="secondary"
-                    prepend-icon="mdi-file-image-outline"
-                    class="font-weight-medium text-truncate max-width-source"
-                    style="cursor: pointer;"
-                    :title="'點擊預覽：' + draft.sourceImage"
-                    @click="previewImageUrl = draft.imageUrl"
-                  >
-                    {{ draft.sourceImage }}
-                  </v-chip>
                 </td>
 
                 <td class="text-caption text-grey align-center">AI 剛辨識</td>
@@ -1058,24 +1056,32 @@ function fileToBase64Payload(file: File) {
 
                 <td class="text-center align-center">
                   <div class="d-flex align-center justify-center gap-1">
-                    <v-btn
-                      icon="mdi-check-circle-outline"
-                      variant="text"
-                      color="success"
-                      size="small"
-                      class="rounded-lg"
-                      @click="confirmDraft(draft.id)"
-                      title="確認加入這筆待辦"
-                    ></v-btn>
-                    <v-btn
-                      icon="mdi-trash-can-outline"
-                      variant="text"
-                      color="muted"
-                      size="small"
-                      class="rounded-lg hover-danger"
-                      @click="discardDraft(draft.id)"
-                      title="捨棄此筆"
-                    ></v-btn>
+                    <v-tooltip text="確認加入這筆待辦" location="top">
+                      <template v-slot:activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-check-circle-outline"
+                          variant="text"
+                          color="success"
+                          size="small"
+                          class="rounded-lg"
+                          @click="confirmDraft(draft.id)"
+                        ></v-btn>
+                      </template>
+                    </v-tooltip>
+                    <v-tooltip text="捨棄此筆" location="top">
+                      <template v-slot:activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-trash-can-outline"
+                          variant="text"
+                          color="muted"
+                          size="small"
+                          class="rounded-lg hover-danger"
+                          @click="discardDraft(draft.id)"
+                        ></v-btn>
+                      </template>
+                    </v-tooltip>
                   </div>
                 </td>
               </tr>
@@ -1090,23 +1096,11 @@ function fileToBase64Payload(file: File) {
                   <span :class="{ 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
                     {{ todo.title }}
                   </span>
-                </td>
-
-                <!-- Due date column -->
-                <td class="align-center">
-                  <template v-if="todo.dueDate">
-                    <v-chip
-                      :color="getDueChipColor(todo)"
-                      size="small"
-                      class="font-weight-bold text-warm-chip"
-                      prepend-icon="mdi-clock-outline"
-                      variant="flat"
-                    >
-                      {{ formatDue(todo.dueDate) }}
-                      <span v-if="dueBadge(todo)?.label" class="ml-1">· {{ dueBadge(todo)?.label }}</span>
-                    </v-chip>
-                  </template>
-                  <span v-else class="text-grey-lighten-1">—</span>
+                  <div v-if="latestProgress(todo)" class="latest-progress mt-1">
+                    <v-icon icon="mdi-text-box-check-outline" size="14" class="mr-1 text-muted-icon"></v-icon>
+                    <span class="text-truncate">{{ latestProgress(todo)?.content }}</span>
+                    <span class="progress-time ml-1">{{ formatCreated(latestProgress(todo)?.createdAt || '') }}</span>
+                  </div>
                 </td>
 
                 <!-- Requester column -->
@@ -1124,16 +1118,6 @@ function fileToBase64Payload(file: File) {
                 <!-- Contact column -->
                 <td class="text-body-2 align-center">
                   <span v-if="todo.contact" class="text-grey-darken-2">{{ todo.contact }}</span>
-                  <span v-else class="text-grey-lighten-1">—</span>
-                </td>
-
-                <!-- Source column -->
-                <td class="align-center">
-                  <template v-if="todo.sourceImage">
-                    <v-chip size="small" variant="tonal" color="secondary" prepend-icon="mdi-file-image-outline" class="font-weight-medium text-truncate max-width-source" :title="todo.sourceImage">
-                      {{ todo.sourceImage }}
-                    </v-chip>
-                  </template>
                   <span v-else class="text-grey-lighten-1">—</span>
                 </td>
 
@@ -1158,48 +1142,55 @@ function fileToBase64Payload(file: File) {
                 <!-- Action column -->
                 <td class="text-center align-center">
                   <div class="d-flex align-center justify-center gap-1">
-                    <v-menu>
+                    <v-tooltip text="新增處理進度" location="top">
                       <template v-slot:activator="{ props }">
                         <v-btn
-                          icon="mdi-swap-horizontal"
+                          v-bind="props"
+                          icon="mdi-note-plus-outline"
                           variant="text"
                           color="primary"
                           size="small"
                           class="rounded-lg"
-                          v-bind="props"
-                          title="切換狀態"
+                          :disabled="todo.status === 'done'"
+                          @click="openProgressDialog(todo.id)"
                         ></v-btn>
                       </template>
-                      <v-list density="compact">
-                        <v-list-item
-                          v-for="column in statusColumns"
-                          :key="column.id"
-                          :active="todo.status === column.id"
-                          @click="updateTodoStatus(todo.id, column.id)"
-                        >
-                          <template v-slot:prepend>
-                            <v-icon :icon="column.icon" :color="getStatusColor(column.id)" size="small"></v-icon>
-                          </template>
-                          <v-list-item-title>{{ column.label }}</v-list-item-title>
-                        </v-list-item>
-                      </v-list>
-                    </v-menu>
+                    </v-tooltip>
 
-                    <v-btn
-                      icon="mdi-delete-outline"
-                      variant="text"
-                      color="muted"
-                      size="small"
-                      class="rounded-lg hover-danger"
-                      @click="removeTodo(todo.id)"
-                      title="刪除任務"
-                    ></v-btn>
+                    <v-tooltip text="結案" location="top">
+                      <template v-slot:activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-archive-check-outline"
+                          variant="text"
+                          color="success"
+                          size="small"
+                          class="rounded-lg"
+                          :disabled="todo.status === 'done'"
+                          @click="closeTodo(todo.id)"
+                        ></v-btn>
+                      </template>
+                    </v-tooltip>
+
+                    <v-tooltip text="刪除任務" location="top">
+                      <template v-slot:activator="{ props }">
+                        <v-btn
+                          v-bind="props"
+                          icon="mdi-delete-outline"
+                          variant="text"
+                          color="muted"
+                          size="small"
+                          class="rounded-lg hover-danger"
+                          @click="removeTodo(todo.id)"
+                        ></v-btn>
+                      </template>
+                    </v-tooltip>
                   </div>
                 </td>
               </tr>
 
               <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
-                <td colspan="9" class="text-center py-10 text-grey-darken-1">
+                <td colspan="7" class="text-center py-10 text-grey-darken-1">
                   <v-icon icon="mdi-playlist-remove" size="48" color="muted" class="mb-2"></v-icon>
                   <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
                   <div class="text-caption text-grey">試試看點選右上角的「手動新增」或截圖貼上吧！</div>
@@ -1219,7 +1210,11 @@ function fileToBase64Payload(file: File) {
             <v-icon icon="mdi-cog-outline" class="mr-2" color="primary"></v-icon>
             系統偵測與設定
           </span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="showSettingsDialog = false"></v-btn>
+          <v-tooltip text="關閉" location="top">
+            <template v-slot:activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-close" variant="text" size="small" @click="showSettingsDialog = false"></v-btn>
+            </template>
+          </v-tooltip>
         </v-card-title>
         
         <v-card-text class="pa-5 d-flex flex-column gap-4">
@@ -1297,7 +1292,11 @@ function fileToBase64Payload(file: File) {
             <v-icon icon="mdi-plus" class="mr-2" color="primary"></v-icon>
             手動新增任務
           </span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="showAddTaskDialog = false"></v-btn>
+          <v-tooltip text="關閉" location="top">
+            <template v-slot:activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-close" variant="text" size="small" @click="showAddTaskDialog = false"></v-btn>
+            </template>
+          </v-tooltip>
         </v-card-title>
         
         <v-form @submit.prevent="submitManualTodo">
@@ -1311,14 +1310,6 @@ function fileToBase64Payload(file: File) {
               required
               autofocus
               :rules="[v => !!v || '任務名稱為必填']"
-            ></v-text-field>
-
-            <v-text-field
-              v-model="newDueDate"
-              label="到期時間 (選填)"
-              type="datetime-local"
-              variant="outlined"
-              density="comfortable"
             ></v-text-field>
           </v-card-text>
           
@@ -1342,7 +1333,11 @@ function fileToBase64Payload(file: File) {
             <v-icon icon="mdi-image-outline" class="mr-2" color="primary"></v-icon>
             截圖預覽
           </span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="previewImageUrl = null"></v-btn>
+          <v-tooltip text="關閉" location="top">
+            <template v-slot:activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-close" variant="text" size="small" @click="previewImageUrl = null"></v-btn>
+            </template>
+          </v-tooltip>
         </v-card-title>
         <v-card-text class="pa-0 bg-warm-page">
           <v-img v-if="previewImageUrl" :src="previewImageUrl" max-height="70vh" contain></v-img>
@@ -1350,6 +1345,53 @@ function fileToBase64Payload(file: File) {
       </v-card>
     </v-dialog>
 
+    <!-- Dialog: Progress Update -->
+    <v-dialog v-model="showProgressDialog" max-width="560">
+      <v-card class="rounded-lg">
+        <v-card-title class="d-flex align-center justify-space-between pa-4 bg-white border-b text-slate-800">
+          <span class="font-weight-black d-flex align-center">
+            <v-icon icon="mdi-note-plus-outline" class="mr-2" color="primary"></v-icon>
+            新增處理進度
+          </span>
+          <v-tooltip text="關閉" location="top">
+            <template v-slot:activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-close" variant="text" size="small" @click="showProgressDialog = false"></v-btn>
+            </template>
+          </v-tooltip>
+        </v-card-title>
+
+        <v-form @submit.prevent="submitProgressUpdate">
+          <v-card-text class="pa-5">
+            <div v-if="selectedProgressTodo?.progressLogs.length" class="progress-history mb-4">
+              <div class="text-caption font-weight-bold text-grey mb-2">處理紀錄</div>
+              <div v-for="log in selectedProgressTodo.progressLogs" :key="log.id" class="progress-history-item">
+                <div class="progress-time mb-1">{{ formatCreated(log.createdAt) }}</div>
+                <div>{{ log.content }}</div>
+              </div>
+            </div>
+            <v-textarea
+              v-model="progressText"
+              label="處理進度"
+              placeholder="例如：已回覆客戶，等待對方確認規格。"
+              variant="outlined"
+              rows="4"
+              auto-grow
+              autofocus
+              hide-details
+            ></v-textarea>
+          </v-card-text>
+
+          <v-divider></v-divider>
+          <v-card-actions class="pa-4 bg-grey-lighten-5 rounded-b-lg">
+            <v-spacer></v-spacer>
+            <v-btn color="muted" variant="text" class="font-weight-bold text-none" @click="showProgressDialog = false">取消</v-btn>
+            <v-btn color="primary" variant="flat" class="font-weight-bold rounded-lg px-6 text-none" type="submit" :disabled="!progressText.trim()">
+              儲存進度
+            </v-btn>
+          </v-card-actions>
+        </v-form>
+      </v-card>
+    </v-dialog>
     <!-- Dialog: Delete Confirm -->
     <v-dialog v-model="showDeleteConfirmDialog" max-width="400">
       <v-card class="rounded-lg">
@@ -1358,7 +1400,11 @@ function fileToBase64Payload(file: File) {
             <v-icon icon="mdi-alert-circle-outline" class="mr-2" color="error"></v-icon>
             確認刪除任務
           </span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="showDeleteConfirmDialog = false"></v-btn>
+          <v-tooltip text="關閉" location="top">
+            <template v-slot:activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-close" variant="text" size="small" @click="showDeleteConfirmDialog = false"></v-btn>
+            </template>
+          </v-tooltip>
         </v-card-title>
         <v-card-text class="pa-5 text-body-1">
           確定要刪除此待辦任務嗎？此動作將無法復原。
@@ -1404,9 +1450,6 @@ body {
   display: inline-block;
 }
 
-.max-width-source {
-  max-width: 140px;
-}
 
 .word-break-all {
   word-break: break-all;
@@ -1563,6 +1606,38 @@ body {
   border-color: #ead8c5 !important;
 }
 
+
+
+.progress-history {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.progress-history-item {
+  background-color: #fff8ef;
+  border-left: 3px solid #d8bda3;
+  border-radius: 6px;
+  color: #6f5e51;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  padding: 9px 11px;
+}
+.latest-progress {
+  align-items: center;
+  color: #8a7a6d;
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.progress-time {
+  color: #b3a395;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
 .text-muted-icon {
   color: #9a8a7c !important;
 }

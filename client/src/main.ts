@@ -33,6 +33,7 @@ const vuetify = createVuetify({
           error: "#b87364",
           "error-lighten-5": "#f8e7df",
           info: "#9c8068",
+          "info-lighten-5": "#f1e9df",
           muted: "#9a8a7c",
           "muted-lighten-5": "#f4ede6",
         },
