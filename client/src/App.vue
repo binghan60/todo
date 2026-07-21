@@ -34,7 +34,6 @@ type DraftItem = {
   sourceImage: string;
   imageUrl: string;
   confidenceNote: string;
-  selected: boolean;
 };
 
 type DueTone = "overdue" | "soon" | "normal";
@@ -97,6 +96,7 @@ const searchQuery = ref("");
 const statusFilter = ref<TodoStatus | "all">("all");
 const analyzingItems = ref<Array<{ id: string; name: string }>>([]);
 const draftQueue = ref<DraftItem[]>([]);
+const previewImageUrl = ref<string | null>(null);
 
 
 const totalCount = computed(() => todos.value.length);
@@ -106,13 +106,6 @@ const pendingCount = computed(() => countByStatus("pending"));
 const overdueCount = computed(
   () => todos.value.filter((todo) => todo.status !== "done" && dueBadge(todo)?.tone === "overdue").length,
 );
-const selectedDraftCount = computed(() => draftQueue.value.filter((draft) => draft.selected).length);
-const allDraftsSelected = computed({
-  get: () => draftQueue.value.length > 0 && draftQueue.value.every((draft) => draft.selected),
-  set: (value: boolean) => {
-    draftQueue.value.forEach((draft) => (draft.selected = value));
-  },
-});
 
 onMounted(() => {
   void loadLocalState();
@@ -364,36 +357,38 @@ function buildDraftItem(draft: AiTaskDraft, sourceImage: string, imageUrl: strin
     confidenceNote: [draft.due_time_guess ? `期限猜測：${draft.due_time_guess}` : "", draft.confidence_note]
       .filter(Boolean)
       .join("　"),
-    selected: true,
   };
 }
 
-function confirmSelectedDrafts() {
-  const toAdd = draftQueue.value.filter((draft) => draft.selected);
-  if (toAdd.length === 0) return;
+function confirmDraft(id: string) {
+  const draft = draftQueue.value.find((item) => item.id === id);
+  if (!draft) return;
 
-  toAdd.forEach((draft) => {
-    todos.value.unshift({
-      id: draft.id,
-      title: draft.title.trim() || "未命名任務",
-      dueDate: draft.dueDate,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      sourceImage: draft.sourceImage,
-      requester: draft.requester || undefined,
-      company: draft.company || undefined,
-      contact: draft.contact || undefined,
-    });
-    URL.revokeObjectURL(draft.imageUrl);
+  todos.value.unshift({
+    id: draft.id,
+    title: draft.title.trim() || "未命名任務",
+    dueDate: draft.dueDate,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    sourceImage: draft.sourceImage,
+    requester: draft.requester || undefined,
+    company: draft.company || undefined,
+    contact: draft.contact || undefined,
   });
 
-  draftQueue.value = draftQueue.value.filter((draft) => !draft.selected);
+  URL.revokeObjectURL(draft.imageUrl);
+  draftQueue.value = draftQueue.value.filter((item) => item.id !== id);
+}
+
+function confirmAllDrafts() {
+  [...draftQueue.value].forEach((draft) => confirmDraft(draft.id));
 }
 
 function discardDraft(id: string) {
   const index = draftQueue.value.findIndex((draft) => draft.id === id);
   if (index === -1) return;
 
+  if (previewImageUrl.value === draftQueue.value[index].imageUrl) previewImageUrl.value = null;
   URL.revokeObjectURL(draftQueue.value[index].imageUrl);
   draftQueue.value = draftQueue.value.filter((draft) => draft.id !== id);
 }
@@ -401,6 +396,7 @@ function discardDraft(id: string) {
 function discardAllDrafts() {
   draftQueue.value.forEach((draft) => URL.revokeObjectURL(draft.imageUrl));
   draftQueue.value = [];
+  previewImageUrl.value = null;
 }
 
 async function callGeminiWithFallback(imageBase64: string, mimeType: string) {
@@ -809,127 +805,27 @@ function fileToBase64Payload(file: File) {
           </v-card-text>
         </v-card>
 
-        <!-- AI Draft Queue (Unconfirmed Tasks) -->
-        <v-card v-if="draftQueue.length" class="mb-6 rounded-lg elevation-0 border-blue-lighten-2" border flat color="blue-lighten-5">
-          <v-card-title class="d-flex justify-space-between align-center flex-wrap py-3 px-4 bg-blue-lighten-4 rounded-t-lg">
-            <div>
-              <div class="text-subtitle-1 font-weight-black text-blue-darken-4">
-                <v-icon icon="mdi-auto-fix" class="mr-1"></v-icon>
-                AI 辨識結果 — 請確認後再加入待辦
-              </div>
-              <div class="text-caption text-blue-darken-3">勾選要加入的任務，可先修改標題與期限，避免 AI 判斷錯誤</div>
-            </div>
-            <div class="d-flex align-center flex-wrap gap-2 mt-2 mt-sm-0">
-              <v-checkbox 
-                v-model="allDraftsSelected" 
-                label="全選" 
-                hide-details 
-                density="compact" 
-                color="blue-darken-4" 
-                class="mr-2"
-              ></v-checkbox>
-              <v-btn color="error" variant="text" size="small" class="font-weight-bold" @click="discardAllDrafts">全部捨棄</v-btn>
-              <v-btn color="blue-darken-3" :disabled="selectedDraftCount === 0" variant="flat" size="small" class="font-weight-bold rounded-lg" @click="confirmSelectedDrafts">
-                批次加入 ({{ selectedDraftCount }} 筆)
-              </v-btn>
-            </div>
-          </v-card-title>
-          
-          <v-card-text class="pa-4">
-            <v-row>
-              <v-col v-for="draft in draftQueue" :key="draft.id" cols="12" md="6" lg="4">
-                <v-card class="rounded-lg fill-height d-flex flex-column border-0 elevation-0" flat>
-                  <v-img :src="draft.imageUrl" height="160" cover class="bg-grey-lighten-2 border-b rounded-t-lg">
-                    <template v-slot:placeholder>
-                      <div class="d-flex align-center justify-center fill-height bg-grey-lighten-3">
-                        <v-progress-circular color="primary" indeterminate></v-progress-circular>
-                      </div>
-                    </template>
-                  </v-img>
-
-                  <v-card-text class="pa-4 flex-grow-1 d-flex flex-column gap-3">
-                    <v-checkbox 
-                      v-model="draft.selected" 
-                      label="確認加入這筆待辦" 
-                      hide-details 
-                      density="compact" 
-                      color="primary" 
-                      class="font-weight-bold mb-1"
-                    ></v-checkbox>
-
-                    <v-text-field 
-                      v-model="draft.title" 
-                      label="任務標題" 
-                      variant="outlined" 
-                      density="comfortable" 
-                      hide-details
-                    ></v-text-field>
-
-                    <v-text-field 
-                      v-model="draft.dueDate" 
-                      label="指定期限（選填）" 
-                      type="datetime-local" 
-                      variant="outlined" 
-                      density="comfortable" 
-                      hide-details
-                    ></v-text-field>
-
-                    <v-text-field
-                      v-if="draft.requester"
-                      v-model="draft.requester"
-                      label="需求者"
-                      variant="outlined"
-                      density="comfortable"
-                      prepend-inner-icon="mdi-account-outline"
-                      hide-details
-                    ></v-text-field>
-
-                    <v-text-field
-                      v-if="draft.company"
-                      v-model="draft.company"
-                      label="公司"
-                      variant="outlined"
-                      density="comfortable"
-                      prepend-inner-icon="mdi-office-building-outline"
-                      hide-details
-                    ></v-text-field>
-
-                    <v-text-field
-                      v-if="draft.contact"
-                      v-model="draft.contact"
-                      label="聯絡方式"
-                      variant="outlined"
-                      density="comfortable"
-                      prepend-inner-icon="mdi-phone-outline"
-                      hide-details
-                    ></v-text-field>
-
-                    <v-alert 
-                      v-if="draft.confidenceNote" 
-                      type="info" 
-                      variant="tonal" 
-                      density="compact" 
-                      class="text-caption py-1 px-3 mt-1 border-0 rounded-lg text-blue-darken-3 bg-blue-lighten-5" 
-                      icon="mdi-lightbulb-on-outline"
-                    >
-                      {{ draft.confidenceNote }}
-                    </v-alert>
-                  </v-card-text>
-
-                  <v-divider></v-divider>
-                  <v-card-actions class="pa-3 bg-grey-lighten-5 justify-end rounded-b-lg">
-                    <v-btn color="error" variant="text" size="small" class="font-weight-bold" prepend-icon="mdi-trash-can-outline" @click="discardDraft(draft.id)">
-                      捨棄此筆
-                    </v-btn>
-                  </v-card-actions>
-                </v-card>
-              </v-col>
-            </v-row>
-          </v-card-text>
-        </v-card>
-
         <!-- Main Task List Card -->
         <v-card class="rounded-lg border-0 elevation-0" border flat>
+          <!-- AI Draft banner -->
+          <v-card-text
+            v-if="draftQueue.length"
+            class="d-flex flex-wrap align-center justify-space-between gap-2 py-2 px-4 bg-blue-lighten-5 border-b"
+          >
+            <div class="d-flex align-center text-blue-darken-4">
+              <v-icon icon="mdi-auto-fix" class="mr-2"></v-icon>
+              <span class="text-body-2 font-weight-bold">
+                AI 辨識結果 — {{ draftQueue.length }} 筆待確認，請在下方表格中確認或編輯後加入
+              </span>
+            </div>
+            <div class="d-flex align-center flex-wrap gap-2">
+              <v-btn color="error" variant="text" size="small" class="font-weight-bold" @click="discardAllDrafts">全部捨棄</v-btn>
+              <v-btn color="blue-darken-3" variant="flat" size="small" class="font-weight-bold rounded-lg" @click="confirmAllDrafts">
+                全部確認加入
+              </v-btn>
+            </div>
+          </v-card-text>
+
           <!-- Toolbar with tabs and search -->
           <v-card-text class="d-flex flex-wrap align-center justify-space-between gap-4 border-b py-3 px-4">
             <v-tabs v-model="statusFilter" color="primary" density="comfortable" class="custom-tabs">
@@ -958,7 +854,6 @@ function fileToBase64Payload(file: File) {
           <v-table class="todo-table w-100">
             <thead>
               <tr>
-                <th class="font-weight-bold" style="width: 140px;">狀態</th>
                 <th class="font-weight-bold">任務名稱</th>
                 <th class="font-weight-bold" style="width: 180px;">期限</th>
                 <th class="font-weight-bold" style="width: 100px;">需求者</th>
@@ -966,47 +861,105 @@ function fileToBase64Payload(file: File) {
                 <th class="font-weight-bold" style="width: 130px;">聯絡方式</th>
                 <th class="font-weight-bold" style="width: 160px;">來源</th>
                 <th class="font-weight-bold" style="width: 150px;">新增時間</th>
-                <th style="width: 60px;"></th>
+                <th class="font-weight-bold" style="width: 140px;">狀態</th>
+                <th style="width: 90px;"></th>
               </tr>
             </thead>
             <tbody>
+              <!-- AI draft rows awaiting confirmation -->
+              <tr v-for="draft in draftQueue" :key="draft.id" class="draft-row">
+                <td class="align-center">
+                  <v-text-field
+                    v-model="draft.title"
+                    placeholder="任務標題"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  >
+                    <template v-if="draft.confidenceNote" v-slot:append-inner>
+                      <v-tooltip :text="draft.confidenceNote" location="top">
+                        <template v-slot:activator="{ props }">
+                          <v-icon v-bind="props" icon="mdi-lightbulb-on-outline" color="amber-darken-2" size="18"></v-icon>
+                        </template>
+                      </v-tooltip>
+                    </template>
+                  </v-text-field>
+                </td>
+
+                <td class="align-center">
+                  <v-text-field
+                    v-model="draft.dueDate"
+                    type="datetime-local"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  ></v-text-field>
+                </td>
+
+                <td class="align-center">
+                  <v-text-field v-model="draft.requester" placeholder="需求者" variant="outlined" density="compact" hide-details></v-text-field>
+                </td>
+
+                <td class="align-center">
+                  <v-text-field v-model="draft.company" placeholder="公司" variant="outlined" density="compact" hide-details></v-text-field>
+                </td>
+
+                <td class="align-center">
+                  <v-text-field v-model="draft.contact" placeholder="聯絡方式" variant="outlined" density="compact" hide-details></v-text-field>
+                </td>
+
+                <td class="align-center">
+                  <v-chip
+                    size="small"
+                    variant="tonal"
+                    color="blue-grey"
+                    prepend-icon="mdi-file-image-outline"
+                    class="font-weight-medium text-truncate max-width-source"
+                    style="cursor: pointer;"
+                    :title="'點擊預覽：' + draft.sourceImage"
+                    @click="previewImageUrl = draft.imageUrl"
+                  >
+                    {{ draft.sourceImage }}
+                  </v-chip>
+                </td>
+
+                <td class="text-caption text-grey align-center">AI 剛辨識</td>
+
+                <td class="align-center">
+                  <v-chip color="blue" size="small" variant="flat" class="font-weight-bold text-white" prepend-icon="mdi-help-circle-outline">
+                    待確認
+                  </v-chip>
+                </td>
+
+                <td class="text-center align-center">
+                  <div class="d-flex align-center justify-center gap-1">
+                    <v-btn
+                      icon="mdi-check-circle-outline"
+                      variant="text"
+                      color="success"
+                      size="small"
+                      class="rounded-lg"
+                      @click="confirmDraft(draft.id)"
+                      title="確認加入這筆待辦"
+                    ></v-btn>
+                    <v-btn
+                      icon="mdi-trash-can-outline"
+                      variant="text"
+                      color="grey-darken-1"
+                      size="small"
+                      class="rounded-lg hover-danger"
+                      @click="discardDraft(draft.id)"
+                      title="捨棄此筆"
+                    ></v-btn>
+                  </div>
+                </td>
+              </tr>
+
               <tr
                 v-for="todo in sortedTodos"
                 :key="todo.id"
                 :class="{ 'row-done bg-grey-lighten-5': todo.status === 'done' }"
               >
-                <!-- Status column with beautiful custom selection -->
-                <td class="align-center">
-                  <v-select
-                    :model-value="todo.status"
-                    :items="statusColumns"
-                    item-title="label"
-                    item-value="id"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    class="status-select-component"
-                    @update:model-value="moveTodo(todo.id, $event)"
-                  >
-                    <template v-slot:selection="{ item }">
-                      <span class="text-body-2 font-weight-medium d-flex align-center">
-                        <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
-                        {{ (item as any).title }}
-                      </span>
-                    </template>
-                    <template v-slot:item="{ item, props }">
-                      <v-list-item v-bind="props">
-                        <template v-slot:title>
-                          <span class="d-flex align-center">
-                            <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
-                            {{ (item as any).title }}
-                          </span>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-select>
-                </td>
-
                 <!-- Title column -->
                 <td class="font-weight-bold text-body-2 align-center">
                   <span :class="{ 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
@@ -1064,6 +1017,38 @@ function fileToBase64Payload(file: File) {
                   {{ formatCreated(todo.createdAt) }}
                 </td>
 
+                <!-- Status column with beautiful custom selection -->
+                <td class="align-center">
+                  <v-select
+                    :model-value="todo.status"
+                    :items="statusColumns"
+                    item-title="label"
+                    item-value="id"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    class="status-select-component"
+                    @update:model-value="moveTodo(todo.id, $event)"
+                  >
+                    <template v-slot:selection="{ item }">
+                      <span class="text-body-2 font-weight-medium d-flex align-center">
+                        <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
+                        {{ (item as any).title }}
+                      </span>
+                    </template>
+                    <template v-slot:item="{ item, props }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:title>
+                          <span class="d-flex align-center">
+                            <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
+                            {{ (item as any).title }}
+                          </span>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                </td>
+
                 <!-- Action column -->
                 <td class="text-center align-center">
                   <v-btn
@@ -1078,7 +1063,7 @@ function fileToBase64Payload(file: File) {
                 </td>
               </tr>
 
-              <tr v-if="sortedTodos.length === 0">
+              <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
                 <td colspan="9" class="text-center py-10 text-grey-darken-1">
                   <v-icon icon="mdi-playlist-remove" size="48" color="grey" class="mb-2"></v-icon>
                   <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
@@ -1214,6 +1199,22 @@ function fileToBase64Payload(file: File) {
       </v-card>
     </v-dialog>
 
+    <!-- Dialog: Screenshot Preview -->
+    <v-dialog :model-value="!!previewImageUrl" max-width="720" @update:model-value="(v) => { if (!v) previewImageUrl = null; }">
+      <v-card class="rounded-lg">
+        <v-card-title class="d-flex align-center justify-space-between pa-4 bg-white border-b text-slate-800">
+          <span class="font-weight-black d-flex align-center">
+            <v-icon icon="mdi-image-outline" class="mr-2" color="primary"></v-icon>
+            截圖預覽
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="previewImageUrl = null"></v-btn>
+        </v-card-title>
+        <v-card-text class="pa-0 bg-grey-lighten-4">
+          <v-img v-if="previewImageUrl" :src="previewImageUrl" max-height="70vh" contain></v-img>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- Dialog: Delete Confirm -->
     <v-dialog v-model="showDeleteConfirmDialog" max-width="400">
       <v-card class="rounded-lg">
@@ -1313,6 +1314,20 @@ body {
 
 .row-done {
   opacity: 0.75;
+}
+
+.draft-row {
+  background-color: #eff6ff;
+  box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+.draft-row:hover {
+  background-color: #dbeafe !important;
+}
+
+.draft-row td {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
 }
 
 /* Scrollbar tweaks */
