@@ -48,7 +48,7 @@ app.post("/api/gemini/analyze", async (req, res) => {
                   "- title：20字內，以動詞開頭的可執行動作，需包含核心需求或產品關鍵字（例：向XX詢問TYPE-C Connector朝上規格報價）\n" +
                   "- requester / company / contact：直接填名稱或資訊，無則留空字串\n" +
                   "- due_time_guess：若有明確期限填日期，否則留空字串\n" +
-                  "- confidence_note：10字內，標注不確定的推斷，否則留空字串\n" +
+                  "- confidence_note：10字內，標注不確定的推斷；不要寫期限相關提示，否則留空字串\n" +
                   "嚴禁捏造資訊。所有欄位禁止寫成完整長句，只留關鍵詞或短語。",
               },
             ],

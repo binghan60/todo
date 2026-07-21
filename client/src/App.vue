@@ -444,10 +444,14 @@ function buildDraftItem(draft: AiTaskDraft, sourceImage: string, imageUrl: strin
     contact: draft.contact,
     sourceImage,
     imageUrl,
-    confidenceNote: [draft.confidence_note]
-      .filter(Boolean)
-      .join("　"),
+    confidenceNote: sanitizeConfidenceNote(draft.confidence_note),
   };
+}
+
+function sanitizeConfidenceNote(note: string) {
+  const normalized = note.trim();
+  if (!normalized || /無明確期限|沒有明確期限|未提及期限|期限不明/.test(normalized)) return "";
+  return normalized;
 }
 
 function confirmDraft(id: string) {
@@ -1017,33 +1021,26 @@ function fileToBase64Payload(file: File) {
               <!-- AI draft rows awaiting confirmation -->
               <tr v-for="draft in draftQueue" :key="draft.id" class="draft-row">
                 <td class="align-center">
-                  <v-text-field
-                    v-model="draft.title"
-                    placeholder="任務標題"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  >
-                    <template v-if="draft.confidenceNote" v-slot:append-inner>
-                      <v-tooltip :text="draft.confidenceNote" location="top">
-                        <template v-slot:activator="{ props }">
-                          <v-icon v-bind="props" icon="mdi-lightbulb-on-outline" color="warning" size="18"></v-icon>
-                        </template>
-                      </v-tooltip>
-                    </template>
-                  </v-text-field>
+                  <div class="draft-input-wrap">
+                    <input v-model="draft.title" class="draft-input draft-input-strong" placeholder="任務標題" />
+                    <v-tooltip v-if="draft.confidenceNote" :text="draft.confidenceNote" location="top">
+                      <template v-slot:activator="{ props }">
+                        <v-icon v-bind="props" icon="mdi-lightbulb-on-outline" color="warning" size="18" class="draft-hint-icon"></v-icon>
+                      </template>
+                    </v-tooltip>
+                  </div>
                 </td>
 
                 <td class="align-center">
-                  <v-text-field v-model="draft.requester" placeholder="需求者" variant="outlined" density="compact" hide-details></v-text-field>
+                  <input v-model="draft.requester" class="draft-input" placeholder="需求者" />
                 </td>
 
                 <td class="align-center">
-                  <v-text-field v-model="draft.company" placeholder="公司" variant="outlined" density="compact" hide-details></v-text-field>
+                  <input v-model="draft.company" class="draft-input" placeholder="公司" />
                 </td>
 
                 <td class="align-center">
-                  <v-text-field v-model="draft.contact" placeholder="聯絡方式" variant="outlined" density="compact" hide-details></v-text-field>
+                  <input v-model="draft.contact" class="draft-input" placeholder="聯絡方式" />
                 </td>
 
                 <td class="text-caption text-grey align-center">AI 剛辨識</td>
@@ -1272,7 +1269,7 @@ function fileToBase64Payload(file: File) {
             class="text-caption rounded-lg border-0 pa-3 mt-1"
             icon="mdi-information-outline"
           >
-            本機將使用 <strong class="text-primary-darken-2">Gemini 3.5 Flash</strong> 進行視覺與文件智慧解析。此功能由本機 API 提供，無需在前端配置 API 金鑰。
+            本機將使用 <strong class="text-primary-darken-2">Gemini 3.5 Flash</strong> 進行視覺與文件智慧解析。
           </v-alert>
         </v-card-text>
         
@@ -1533,6 +1530,56 @@ body {
   opacity: 0.75;
 }
 
+
+.draft-input-wrap {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.draft-input {
+  background: rgba(255, 253, 249, 0.72);
+  border: 1px solid transparent;
+  border-bottom-color: #d8bda3;
+  border-radius: 6px;
+  color: #5f4d40;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  min-height: 34px;
+  min-width: 0;
+  outline: none;
+  padding: 6px 8px;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  width: 100%;
+}
+
+.draft-input::placeholder {
+  color: #b3a395;
+  font-weight: 500;
+}
+
+.draft-input:hover {
+  background: #fffaf4;
+  border-color: #ead8c5;
+}
+
+.draft-input:focus {
+  background: #fffdf9;
+  border-color: #caa584;
+  box-shadow: 0 0 0 3px rgba(183, 121, 92, 0.14);
+}
+
+.draft-input-strong {
+  color: #4f3f34;
+  font-weight: 800;
+}
+
+.draft-hint-icon {
+  flex: 0 0 auto;
+  opacity: 0.82;
+}
 .draft-row {
   background-color: #fff1e8;
   box-shadow: inset 3px 0 0 #d49a45;
