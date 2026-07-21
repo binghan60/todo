@@ -74,6 +74,7 @@ const DB_NAME = "todo-pwa.handles";
 const DB_STORE = "file-handles";
 const DIRECTORY_HANDLE_KEY = "screenshot-directory";
 const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
+const STATUS_FILTER_KEY = "todo-pwa.status-filter";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
 
 type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
@@ -161,6 +162,9 @@ watch(autoScan, (enabled) => {
   if (enabled) startAutoScan();
   else stopAutoScan();
 });
+watch(statusFilter, (value) => {
+  localStorage.setItem(STATUS_FILTER_KEY, value);
+});
 
 function normalizeTodo(todo: StoredTodo): Todo {
   const progressLogs = Array.isArray(todo.progressLogs) ? todo.progressLogs : [];
@@ -219,6 +223,11 @@ async function loadLocalState() {
     } catch {
       columnWidths.value = { ...defaultColumnWidths };
     }
+  }
+
+  const storedStatusFilter = localStorage.getItem(STATUS_FILTER_KEY);
+  if (storedStatusFilter === "all" || storedStatusFilter === "pending" || storedStatusFilter === "in_progress" || storedStatusFilter === "done") {
+    statusFilter.value = storedStatusFilter;
   }
 
   const storedDirectory = await getStoredDirectoryHandle();
@@ -634,6 +643,12 @@ function closeTodo(todoId: string) {
 function latestProgress(todo: Todo) {
   const logs = todo.progressLogs ?? [];
   return logs.length ? logs[logs.length - 1] : null;
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isEmail(value: string) {
+  return EMAIL_PATTERN.test(value.trim());
 }
 
 const expandedTodoIds = ref<Set<string>>(new Set());
@@ -1197,7 +1212,15 @@ function fileToBase64Payload(file: File) {
 
                 <!-- Contact column -->
                 <td class="text-body-2 align-center">
-                  <span v-if="todo.contact" class="text-grey-darken-2">{{ todo.contact }}</span>
+                  <a
+                    v-if="todo.contact && isEmail(todo.contact)"
+                    :href="`mailto:${todo.contact}`"
+                    class="contact-link"
+                    @click.stop
+                  >
+                    <v-icon icon="mdi-email-outline" size="14" class="mr-1"></v-icon>{{ todo.contact }}
+                  </a>
+                  <span v-else-if="todo.contact" class="text-grey-darken-2">{{ todo.contact }}</span>
                   <span v-else class="text-grey-lighten-1">—</span>
                 </td>
 
@@ -1861,6 +1884,18 @@ body {
 
 .progress-accordion-row {
   background-color: #fdf6ec;
+}
+
+.contact-link {
+  align-items: center;
+  color: #2f6f4e;
+  display: inline-flex;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.contact-link:hover {
+  text-decoration: underline;
 }
 
 .progress-accordion-row .progress-history {
