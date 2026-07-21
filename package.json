@@ -1,0 +1,13 @@
+{
+  "name": "gemini-screenshot-todo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix client install && npm --prefix client run build && npm --prefix server install",
+    "start": "npm --prefix server run serve"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

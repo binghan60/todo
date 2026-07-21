@@ -1,5 +1,9 @@
 import express from "express";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 const port = Number(process.env.API_PORT || process.env.PORT || 8787);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const clientDist = join(__dirname, "..", "client", "dist");
 
 const app = express();
 
@@ -106,6 +110,11 @@ app.post("/api/gemini/analyze", async (req, res) => {
     console.error(error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Server error" });
   }
+});
+
+app.use(express.static(clientDist));
+app.get(/.*/, (_req, res) => {
+  res.sendFile(join(clientDist, "index.html"));
 });
 
 app.listen(port, () => {
