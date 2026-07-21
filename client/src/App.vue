@@ -597,10 +597,10 @@ function dueBadge(todo: Todo): { label: string; tone: DueTone } | null {
 
 function getDueChipColor(todo: Todo) {
   const badge = dueBadge(todo);
-  if (!badge) return "grey";
+  if (!badge) return "muted";
   if (badge.tone === "overdue") return "error";
   if (badge.tone === "soon") return "warning";
-  return "grey-darken-1";
+  return "secondary";
 }
 
 function getStatusIcon(status: TodoStatus) {
@@ -611,8 +611,8 @@ function getStatusIcon(status: TodoStatus) {
 }
 
 function getStatusColor(status: TodoStatus) {
-  if (status === "pending") return "grey-darken-1";
-  if (status === "in_progress") return "blue";
+  if (status === "pending") return "secondary";
+  if (status === "in_progress") return "warning";
   if (status === "done") return "success";
   return "grey";
 }
@@ -670,9 +670,9 @@ function fileToBase64Payload(file: File) {
 </script>
 
 <template>
-  <v-app class="bg-slate-50">
+  <v-app class="bg-warm-50">
     <!-- Navbar / AppBar -->
-    <v-app-bar flat border color="white" class="px-md-6 border-b px-2">
+    <v-app-bar flat border color="surface" class="px-md-6 border-b px-2 warm-app-bar">
       <div class="d-flex align-center">
         <v-avatar color="primary-lighten-5" rounded="lg" size="40" class="mr-3">
           <v-icon icon="mdi-checkbox-marked-circle-auto-outline" color="primary" size="24"></v-icon>
@@ -699,22 +699,22 @@ function fileToBase64Payload(file: File) {
       <v-btn
         icon="mdi-cog-outline"
         variant="outlined"
-        color="grey-darken-1"
+        color="muted"
         class="rounded-lg"
         @click="showSettingsDialog = true"
         title="系統設定"
       ></v-btn>
     </v-app-bar>
 
-    <v-main class="bg-grey-lighten-4">
+    <v-main class="bg-warm-page">
       <v-container fluid class="pa-4 pa-md-6 max-width-wrapper">
         <!-- Stats Dashboard -->
         <div class="stats-grid mb-6">
           <!-- Stat Cards -->
           <v-card class="rounded-lg border-0 elevation-0" border flat>
             <v-card-text class="d-flex align-center pa-4">
-              <v-avatar color="grey-lighten-4" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-clock-outline" color="grey-darken-1" size="24"></v-icon>
+              <v-avatar color="muted-lighten-5" size="48" rounded="lg" class="mr-4">
+                <v-icon icon="mdi-clock-outline" color="muted" size="24"></v-icon>
               </v-avatar>
               <div>
                 <div class="text-caption text-grey font-weight-bold">待辦任務</div>
@@ -725,12 +725,12 @@ function fileToBase64Payload(file: File) {
 
           <v-card class="rounded-lg border-0 elevation-0" border flat>
             <v-card-text class="d-flex align-center pa-4">
-              <v-avatar color="blue-lighten-5" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-rocket-launch" color="blue" size="24"></v-icon>
+              <v-avatar color="warning-lighten-5" size="48" rounded="lg" class="mr-4">
+                <v-icon icon="mdi-rocket-launch" color="warning" size="24"></v-icon>
               </v-avatar>
               <div>
                 <div class="text-caption text-grey font-weight-bold">進行中</div>
-                <div class="text-h5 font-weight-black text-blue mt-1" style="line-height: 1;">{{ inProgressCount }}</div>
+                <div class="text-h5 font-weight-black text-warning mt-1" style="line-height: 1;">{{ inProgressCount }}</div>
               </div>
             </v-card-text>
           </v-card>
@@ -747,10 +747,10 @@ function fileToBase64Payload(file: File) {
             </v-card-text>
           </v-card>
 
-          <v-card class="rounded-lg border-0 elevation-0" border flat :color="overdueCount > 0 ? 'red-lighten-5' : undefined">
+          <v-card class="rounded-lg border-0 elevation-0" border flat :color="overdueCount > 0 ? 'error-lighten-5' : undefined">
             <v-card-text class="d-flex align-center pa-4">
-              <v-avatar :color="overdueCount > 0 ? 'red-lighten-4' : 'grey-lighten-4'" size="48" rounded="lg" class="mr-4">
-                <v-icon icon="mdi-alert-circle" :color="overdueCount > 0 ? 'error' : 'grey-darken-1'" size="24"></v-icon>
+              <v-avatar :color="overdueCount > 0 ? 'error-lighten-5' : 'secondary-lighten-5'" size="48" rounded="lg" class="mr-4">
+                <v-icon icon="mdi-alert-circle" :color="overdueCount > 0 ? 'error' : 'muted'" size="24"></v-icon>
               </v-avatar>
               <div>
                 <div class="text-caption text-grey font-weight-bold">已逾期</div>
@@ -867,7 +867,7 @@ function fileToBase64Payload(file: File) {
           <!-- Instructions & Status -->
           <v-divider></v-divider>
           <v-card-text class="py-2 px-4 bg-grey-lighten-5 text-caption text-grey-darken-1 d-flex align-center">
-            <v-icon icon="mdi-information-outline" class="mr-1" size="16"></v-icon>
+            <v-icon icon="mdi-information-outline" class="mr-1 text-muted-icon" size="16"></v-icon>
             <span>狀態：{{ scannerStatus }}</span>
             <v-spacer></v-spacer>
             <span class="d-none d-sm-inline d-flex align-center">
@@ -882,17 +882,17 @@ function fileToBase64Payload(file: File) {
           <!-- AI Draft banner -->
           <v-card-text
             v-if="draftQueue.length"
-            class="d-flex flex-wrap align-center justify-space-between gap-2 py-2 px-4 bg-blue-lighten-5 border-b"
+            class="d-flex flex-wrap align-center justify-space-between gap-2 py-2 px-4 bg-peach-50 border-b"
           >
-            <div class="d-flex align-center text-blue-darken-4">
-              <v-icon icon="mdi-auto-fix" class="mr-2"></v-icon>
+            <div class="d-flex align-center text-warm-primary">
+              <v-icon icon="mdi-auto-fix" class="mr-2 text-muted-icon"></v-icon>
               <span class="text-body-2 font-weight-bold">
                 AI 辨識結果 — {{ draftQueue.length }} 筆待確認，請在下方表格中確認或編輯後加入
               </span>
             </div>
             <div class="d-flex align-center flex-wrap gap-2">
               <v-btn color="error" variant="text" size="small" class="font-weight-bold" @click="discardAllDrafts">全部捨棄</v-btn>
-              <v-btn color="blue-darken-3" variant="flat" size="small" class="font-weight-bold rounded-lg" @click="confirmAllDrafts">
+              <v-btn color="primary" variant="flat" size="small" class="font-weight-bold rounded-lg" @click="confirmAllDrafts">
                 全部確認加入
               </v-btn>
             </div>
@@ -905,7 +905,7 @@ function fileToBase64Payload(file: File) {
                 全部 ({{ totalCount }})
               </v-tab>
               <v-tab v-for="column in statusColumns" :key="column.id" :value="column.id">
-                <v-icon :icon="column.icon" class="mr-1" size="small"></v-icon>
+                <v-icon :icon="column.icon" class="mr-1 text-muted-icon" size="small"></v-icon>
                 {{ column.label }} ({{ countByStatus(column.id) }})
               </v-tab>
             </v-tabs>
@@ -913,7 +913,7 @@ function fileToBase64Payload(file: File) {
             <div class="d-flex align-center gap-2">
               <v-btn
                 variant="outlined"
-                color="grey-darken-1"
+                color="muted"
                 size="small"
                 density="comfortable"
                 prepend-icon="mdi-table-column-width"
@@ -1004,7 +1004,7 @@ function fileToBase64Payload(file: File) {
                     <template v-if="draft.confidenceNote" v-slot:append-inner>
                       <v-tooltip :text="draft.confidenceNote" location="top">
                         <template v-slot:activator="{ props }">
-                          <v-icon v-bind="props" icon="mdi-lightbulb-on-outline" color="amber-darken-2" size="18"></v-icon>
+                          <v-icon v-bind="props" icon="mdi-lightbulb-on-outline" color="warning" size="18"></v-icon>
                         </template>
                       </v-tooltip>
                     </template>
@@ -1037,7 +1037,7 @@ function fileToBase64Payload(file: File) {
                   <v-chip
                     size="small"
                     variant="tonal"
-                    color="blue-grey"
+                    color="secondary"
                     prepend-icon="mdi-file-image-outline"
                     class="font-weight-medium text-truncate max-width-source"
                     style="cursor: pointer;"
@@ -1051,7 +1051,7 @@ function fileToBase64Payload(file: File) {
                 <td class="text-caption text-grey align-center">AI 剛辨識</td>
 
                 <td class="align-center">
-                  <v-chip color="blue" size="small" variant="flat" class="font-weight-bold text-white" prepend-icon="mdi-help-circle-outline">
+                  <v-chip color="warning" size="small" variant="flat" class="font-weight-bold text-warm-chip" prepend-icon="mdi-help-circle-outline">
                     待確認
                   </v-chip>
                 </td>
@@ -1070,7 +1070,7 @@ function fileToBase64Payload(file: File) {
                     <v-btn
                       icon="mdi-trash-can-outline"
                       variant="text"
-                      color="grey-darken-1"
+                      color="muted"
                       size="small"
                       class="rounded-lg hover-danger"
                       @click="discardDraft(draft.id)"
@@ -1083,7 +1083,7 @@ function fileToBase64Payload(file: File) {
               <tr
                 v-for="todo in sortedTodos"
                 :key="todo.id"
-                :class="{ 'row-done bg-grey-lighten-5': todo.status === 'done' }"
+                :class="{ 'row-done bg-sage-50': todo.status === 'done' }"
               >
                 <!-- Title column -->
                 <td class="font-weight-bold text-body-2 align-center">
@@ -1098,7 +1098,7 @@ function fileToBase64Payload(file: File) {
                     <v-chip
                       :color="getDueChipColor(todo)"
                       size="small"
-                      class="font-weight-bold text-white"
+                      class="font-weight-bold text-warm-chip"
                       prepend-icon="mdi-clock-outline"
                       variant="flat"
                     >
@@ -1130,7 +1130,7 @@ function fileToBase64Payload(file: File) {
                 <!-- Source column -->
                 <td class="align-center">
                   <template v-if="todo.sourceImage">
-                    <v-chip size="small" variant="tonal" color="blue-grey" prepend-icon="mdi-file-image-outline" class="font-weight-medium text-truncate max-width-source" :title="todo.sourceImage">
+                    <v-chip size="small" variant="tonal" color="secondary" prepend-icon="mdi-file-image-outline" class="font-weight-medium text-truncate max-width-source" :title="todo.sourceImage">
                       {{ todo.sourceImage }}
                     </v-chip>
                   </template>
@@ -1148,7 +1148,7 @@ function fileToBase64Payload(file: File) {
                     :color="getStatusColor(todo.status)"
                     size="small"
                     variant="flat"
-                    class="font-weight-bold text-white"
+                    class="font-weight-bold text-warm-chip"
                     :prepend-icon="getStatusIcon(todo.status)"
                   >
                     {{ statusColumns.find((column) => column.id === todo.status)?.label }}
@@ -1188,7 +1188,7 @@ function fileToBase64Payload(file: File) {
                     <v-btn
                       icon="mdi-delete-outline"
                       variant="text"
-                      color="grey-darken-1"
+                      color="muted"
                       size="small"
                       class="rounded-lg hover-danger"
                       @click="removeTodo(todo.id)"
@@ -1200,7 +1200,7 @@ function fileToBase64Payload(file: File) {
 
               <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
                 <td colspan="9" class="text-center py-10 text-grey-darken-1">
-                  <v-icon icon="mdi-playlist-remove" size="48" color="grey" class="mb-2"></v-icon>
+                  <v-icon icon="mdi-playlist-remove" size="48" color="muted" class="mb-2"></v-icon>
                   <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
                   <div class="text-caption text-grey">試試看點選右上角的「手動新增」或截圖貼上吧！</div>
                 </td>
@@ -1226,7 +1226,7 @@ function fileToBase64Payload(file: File) {
           <!-- Folder configuration -->
           <div>
             <div class="text-subtitle-2 font-weight-bold mb-2 text-grey-darken-3">目前監看的截圖資料夾</div>
-            <v-card variant="flat" color="grey-lighten-4" class="pa-3 rounded-lg mb-3 border">
+            <v-card variant="flat" color="muted-lighten-5" class="pa-3 rounded-lg mb-3 border">
               <div class="text-caption text-grey-darken-1 word-break-all font-weight-medium">
                 {{ directoryName }}
               </div>
@@ -1284,7 +1284,7 @@ function fileToBase64Payload(file: File) {
         <v-divider></v-divider>
         <v-card-actions class="pa-4 bg-grey-lighten-5 rounded-b-lg">
           <v-spacer></v-spacer>
-          <v-btn color="grey-darken-1" variant="text" class="font-weight-bold text-none" @click="showSettingsDialog = false">關閉</v-btn>
+          <v-btn color="muted" variant="text" class="font-weight-bold text-none" @click="showSettingsDialog = false">關閉</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1325,7 +1325,7 @@ function fileToBase64Payload(file: File) {
           <v-divider></v-divider>
           <v-card-actions class="pa-4 bg-grey-lighten-5 rounded-b-lg">
             <v-spacer></v-spacer>
-            <v-btn color="grey-darken-1" variant="text" class="font-weight-bold text-none" @click="showAddTaskDialog = false">取消</v-btn>
+            <v-btn color="muted" variant="text" class="font-weight-bold text-none" @click="showAddTaskDialog = false">取消</v-btn>
             <v-btn color="primary" variant="flat" class="font-weight-bold rounded-lg px-6 text-none" type="submit" :disabled="!newTitle.trim()">
               確定新增
             </v-btn>
@@ -1344,7 +1344,7 @@ function fileToBase64Payload(file: File) {
           </span>
           <v-btn icon="mdi-close" variant="text" size="small" @click="previewImageUrl = null"></v-btn>
         </v-card-title>
-        <v-card-text class="pa-0 bg-grey-lighten-4">
+        <v-card-text class="pa-0 bg-warm-page">
           <v-img v-if="previewImageUrl" :src="previewImageUrl" max-height="70vh" contain></v-img>
         </v-card-text>
       </v-card>
@@ -1366,7 +1366,7 @@ function fileToBase64Payload(file: File) {
         <v-divider></v-divider>
         <v-card-actions class="pa-4 bg-grey-lighten-5 rounded-b-lg">
           <v-spacer></v-spacer>
-          <v-btn color="grey-darken-1" variant="text" class="font-weight-bold text-none" @click="showDeleteConfirmDialog = false">取消</v-btn>
+          <v-btn color="muted" variant="text" class="font-weight-bold text-none" @click="showDeleteConfirmDialog = false">取消</v-btn>
           <v-btn color="error" variant="flat" class="font-weight-bold rounded-lg px-6 text-none" @click="confirmDeleteTodo">
             確認刪除
           </v-btn>
@@ -1427,15 +1427,15 @@ body {
 }
 
 .todo-table th {
-  background-color: #f8fafc !important;
-  color: #64748b !important;
+  background-color: #fff8ef !important;
+  color: #8f6f56 !important;
   font-size: 0.8rem !important;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .todo-table td {
-  border-bottom: 1px solid #f1f5f9 !important;
+  border-bottom: 1px solid #f1dfcf !important;
   overflow: hidden;
 }
 
@@ -1465,17 +1465,17 @@ body {
   width: 2px;
   height: 60%;
   border-radius: 1px;
-  background-color: #cbd5e1;
+  background-color: #d8bda3;
 }
 
 .col-resize-handle:hover,
 .col-resize-handle:active {
-  background-color: rgba(59, 130, 246, 0.35);
+  background-color: rgba(200, 121, 74, 0.22);
 }
 
 .col-resize-handle:hover::after,
 .col-resize-handle:active::after {
-  background-color: #3b82f6;
+  background-color: #c8794a;
 }
 
 .todo-table tbody tr {
@@ -1483,7 +1483,7 @@ body {
 }
 
 .todo-table tbody tr:hover {
-  background-color: #f8fafc;
+  background-color: #fff8ef;
 }
 
 .row-done {
@@ -1491,12 +1491,12 @@ body {
 }
 
 .draft-row {
-  background-color: #eff6ff;
-  box-shadow: inset 3px 0 0 #3b82f6;
+  background-color: #fff1e8;
+  box-shadow: inset 3px 0 0 #d49a45;
 }
 
 .draft-row:hover {
-  background-color: #dbeafe !important;
+  background-color: #ffe7d7 !important;
 }
 
 .draft-row td {
@@ -1510,14 +1510,14 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #f4e7d8;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #d8bda3;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #b98967;
 }
 
 /* Custom Overrides for Premium Looks */
@@ -1526,15 +1526,53 @@ body {
 }
 
 .hover-danger:hover {
-  color: #ef4444 !important;
-  background-color: #fef2f2 !important;
+  color: #c96f5c !important;
+  background-color: #fff0e8 !important;
 }
 
 .border-b {
-  border-bottom: 1px solid #e2e8f0 !important;
+  border-bottom: 1px solid #ead8c5 !important;
 }
 
-.bg-slate-50 {
-  background-color: #f8fafc !important;
+.bg-warm-50 {
+  background-color: #fff8ef !important;
+}
+
+.bg-warm-page {
+  background: linear-gradient(180deg, #fff8ef 0%, #f8eddf 100%) !important;
+}
+
+.bg-peach-50 {
+  background-color: #fff1e8 !important;
+}
+
+.bg-sage-50 {
+  background-color: #f2f5ec !important;
+}
+
+.text-warm-primary {
+  color: #8f492d !important;
+}
+
+.warm-app-bar {
+  background-color: rgba(255, 253, 249, 0.92) !important;
+  backdrop-filter: blur(10px);
+}
+
+.v-card {
+  border-color: #ead8c5 !important;
+}
+
+.text-muted-icon {
+  color: #9a8a7c !important;
+}
+
+.text-warm-chip {
+  color: #fffaf4 !important;
+}
+
+.v-btn.v-btn--icon .v-icon,
+.v-chip .v-icon {
+  opacity: 0.86;
 }
 </style>
