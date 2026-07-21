@@ -636,6 +636,18 @@ function latestProgress(todo: Todo) {
   return logs.length ? logs[logs.length - 1] : null;
 }
 
+const expandedTodoIds = ref<Set<string>>(new Set());
+
+function toggleTodoExpand(todoId: string) {
+  const next = new Set(expandedTodoIds.value);
+  if (next.has(todoId)) {
+    next.delete(todoId);
+  } else {
+    next.add(todoId);
+  }
+  expandedTodoIds.value = next;
+}
+
 function removeTodo(todoId: string) {
   todoIdToDelete.value = todoId;
   showDeleteConfirmDialog.value = true;
@@ -1141,9 +1153,8 @@ function fileToBase64Payload(file: File) {
                 </td>
               </tr>
 
+              <template v-for="(todo, todoIndex) in sortedTodos" :key="todo.id">
               <tr
-                v-for="(todo, todoIndex) in sortedTodos"
-                :key="todo.id"
                 :class="{ 'row-done bg-sage-50': todo.status === 'done' }"
               >
                 <!-- Sequence column -->
@@ -1156,10 +1167,19 @@ function fileToBase64Payload(file: File) {
                   <span :class="{ 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
                     {{ todo.title }}
                   </span>
-                  <div v-if="latestProgress(todo)" class="latest-progress mt-1">
-                    <v-icon icon="mdi-text-box-check-outline" size="14" class="mr-1 text-muted-icon"></v-icon>
+                  <div
+                    v-if="latestProgress(todo)"
+                    class="latest-progress mt-1 latest-progress-toggle"
+                    @click="toggleTodoExpand(todo.id)"
+                  >
+                    <v-icon
+                      :icon="expandedTodoIds.has(todo.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                      size="14"
+                      class="mr-1 text-muted-icon"
+                    ></v-icon>
                     <span class="text-truncate">{{ latestProgress(todo)?.content }}</span>
                     <span class="progress-time ml-1">{{ formatCreated(latestProgress(todo)?.createdAt || '') }}</span>
+                    <span v-if="todo.progressLogs.length > 1" class="progress-count ml-1">共 {{ todo.progressLogs.length }} 筆</span>
                   </div>
                 </td>
 
@@ -1248,6 +1268,23 @@ function fileToBase64Payload(file: File) {
                   </div>
                 </td>
               </tr>
+
+              <tr v-if="expandedTodoIds.has(todo.id) && todo.progressLogs.length" class="progress-accordion-row">
+                <td colspan="8" class="pa-0">
+                  <div class="progress-history px-4 py-3">
+                    <div class="text-caption font-weight-bold text-grey mb-2">處理紀錄</div>
+                    <div
+                      v-for="log in [...todo.progressLogs].reverse()"
+                      :key="log.id"
+                      class="progress-history-item"
+                    >
+                      <div class="progress-time mb-1">{{ formatCreated(log.createdAt) }}</div>
+                      <div>{{ log.content }}</div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              </template>
 
               <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
                 <td colspan="8" class="text-center py-10 text-grey-darken-1">
@@ -1804,6 +1841,30 @@ body {
   flex: 0 0 auto;
   font-size: 0.72rem;
   font-weight: 500;
+}
+
+.latest-progress-toggle {
+  cursor: pointer;
+}
+
+.latest-progress-toggle:hover {
+  color: #6f5e51;
+}
+
+.progress-count {
+  color: #b3a395;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.progress-accordion-row {
+  background-color: #fdf6ec;
+}
+
+.progress-accordion-row .progress-history {
+  max-height: none;
 }
 .text-muted-icon {
   color: #9a8a7c !important;
