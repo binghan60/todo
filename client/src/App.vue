@@ -61,7 +61,22 @@ const PROCESSED_KEY = "todo-pwa.processed-images";
 const DB_NAME = "todo-pwa.handles";
 const DB_STORE = "file-handles";
 const DIRECTORY_HANDLE_KEY = "screenshot-directory";
+const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
+
+type ColumnKey = "title" | "due" | "requester" | "company" | "contact" | "source" | "created" | "status" | "action";
+
+const defaultColumnWidths: Record<ColumnKey, number> = {
+  title: 260,
+  due: 180,
+  requester: 100,
+  company: 120,
+  contact: 130,
+  source: 160,
+  created: 150,
+  status: 140,
+  action: 90,
+};
 
 const statusColumns: Array<{ id: TodoStatus; label: string; hint: string; icon: string }> = [
   { id: "pending", label: "待辦", hint: "等候處理", icon: "mdi-clock-outline" },
@@ -97,6 +112,10 @@ const statusFilter = ref<TodoStatus | "all">("all");
 const analyzingItems = ref<Array<{ id: string; name: string }>>([]);
 const draftQueue = ref<DraftItem[]>([]);
 const previewImageUrl = ref<string | null>(null);
+const columnWidths = ref<Record<ColumnKey, number>>({ ...defaultColumnWidths });
+const resizingColumn = ref<ColumnKey | null>(null);
+let resizeStartX = 0;
+let resizeStartWidth = 0;
 
 
 const totalCount = computed(() => todos.value.length);
@@ -119,6 +138,8 @@ onUnmounted(() => {
   window.removeEventListener("paste", onWindowPaste);
   window.removeEventListener("dragover", onDragOver);
   window.removeEventListener("drop", onDrop);
+  window.removeEventListener("mousemove", onColumnResizeMove);
+  window.removeEventListener("mouseup", stopColumnResize);
   draftQueue.value.forEach((draft) => URL.revokeObjectURL(draft.imageUrl));
 });
 
@@ -135,6 +156,15 @@ async function loadLocalState() {
 
   if (storedTodos) todos.value = JSON.parse(storedTodos) as Todo[];
   if (storedProcessed) processedKeys.value = new Set(JSON.parse(storedProcessed) as string[]);
+
+  const storedColumnWidths = localStorage.getItem(COLUMN_WIDTHS_KEY);
+  if (storedColumnWidths) {
+    try {
+      columnWidths.value = { ...defaultColumnWidths, ...JSON.parse(storedColumnWidths) };
+    } catch {
+      columnWidths.value = { ...defaultColumnWidths };
+    }
+  }
 
   const storedDirectory = await getStoredDirectoryHandle();
   if (!storedDirectory) return;
@@ -191,6 +221,43 @@ function saveTodos() {
 
 function saveProcessedKeys() {
   localStorage.setItem(PROCESSED_KEY, JSON.stringify([...processedKeys.value]));
+}
+
+function saveColumnWidths() {
+  localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths.value));
+}
+
+function resetColumnWidths() {
+  columnWidths.value = { ...defaultColumnWidths };
+  saveColumnWidths();
+}
+
+function startColumnResize(column: ColumnKey, event: MouseEvent) {
+  resizingColumn.value = column;
+  resizeStartX = event.clientX;
+  resizeStartWidth = columnWidths.value[column];
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+  window.addEventListener("mousemove", onColumnResizeMove);
+  window.addEventListener("mouseup", stopColumnResize);
+  event.preventDefault();
+}
+
+function onColumnResizeMove(event: MouseEvent) {
+  if (!resizingColumn.value) return;
+  const delta = event.clientX - resizeStartX;
+  const nextWidth = Math.max(60, resizeStartWidth + delta);
+  columnWidths.value = { ...columnWidths.value, [resizingColumn.value]: nextWidth };
+}
+
+function stopColumnResize() {
+  if (!resizingColumn.value) return;
+  resizingColumn.value = null;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+  window.removeEventListener("mousemove", onColumnResizeMove);
+  window.removeEventListener("mouseup", stopColumnResize);
+  saveColumnWidths();
 }
 
 async function pickDirectory() {
@@ -470,11 +537,9 @@ function createTodo(title: string, dueDate = "", sourceImage = "") {
   });
 }
 
-function moveTodo(todoId: string, status: unknown) {
+function updateTodoStatus(todoId: string, status: TodoStatus) {
   const todo = todos.value.find((item) => item.id === todoId);
-  if (todo && (status === "pending" || status === "in_progress" || status === "done")) {
-    todo.status = status;
-  }
+  if (todo) todo.status = status;
 }
 
 function removeTodo(todoId: string) {
@@ -543,6 +608,13 @@ function getStatusIcon(status: TodoStatus) {
   if (status === "in_progress") return "mdi-rocket-launch";
   if (status === "done") return "mdi-check-circle";
   return "";
+}
+
+function getStatusColor(status: TodoStatus) {
+  if (status === "pending") return "grey-darken-1";
+  if (status === "in_progress") return "blue";
+  if (status === "done") return "success";
+  return "grey";
 }
 
 function formatDue(dueDate: string) {
@@ -838,31 +910,84 @@ function fileToBase64Payload(file: File) {
               </v-tab>
             </v-tabs>
 
-            <v-text-field
-              v-model="searchQuery"
-              prepend-inner-icon="mdi-magnify"
-              placeholder="搜尋任務名稱..."
-              variant="outlined"
-              density="compact"
-              hide-details
-              style="max-width: 300px; width: 100%;"
-              clearable
-            ></v-text-field>
+            <div class="d-flex align-center gap-2">
+              <v-btn
+                variant="outlined"
+                color="grey-darken-1"
+                size="small"
+                density="comfortable"
+                prepend-icon="mdi-table-column-width"
+                class="font-weight-bold rounded-lg text-none"
+                @click="resetColumnWidths"
+                title="將表格每一欄的寬度回復成預設值"
+              >
+                回復預設欄寬
+              </v-btn>
+
+              <v-text-field
+                v-model="searchQuery"
+                prepend-inner-icon="mdi-magnify"
+                placeholder="搜尋任務名稱..."
+                variant="outlined"
+                density="compact"
+                hide-details
+                style="max-width: 300px; width: 100%;"
+                clearable
+              ></v-text-field>
+            </div>
           </v-card-text>
 
           <!-- Responsive Tasks Table -->
           <v-table class="todo-table w-100">
+            <colgroup>
+              <col :style="{ width: columnWidths.title + 'px' }" />
+              <col :style="{ width: columnWidths.due + 'px' }" />
+              <col :style="{ width: columnWidths.requester + 'px' }" />
+              <col :style="{ width: columnWidths.company + 'px' }" />
+              <col :style="{ width: columnWidths.contact + 'px' }" />
+              <col :style="{ width: columnWidths.source + 'px' }" />
+              <col :style="{ width: columnWidths.created + 'px' }" />
+              <col :style="{ width: columnWidths.status + 'px' }" />
+              <col :style="{ width: columnWidths.action + 'px' }" />
+            </colgroup>
             <thead>
               <tr>
-                <th class="font-weight-bold">任務名稱</th>
-                <th class="font-weight-bold" style="width: 180px;">期限</th>
-                <th class="font-weight-bold" style="width: 100px;">需求者</th>
-                <th class="font-weight-bold" style="width: 120px;">公司</th>
-                <th class="font-weight-bold" style="width: 130px;">聯絡方式</th>
-                <th class="font-weight-bold" style="width: 160px;">來源</th>
-                <th class="font-weight-bold" style="width: 150px;">新增時間</th>
-                <th class="font-weight-bold" style="width: 140px;">狀態</th>
-                <th style="width: 90px;"></th>
+                <th class="font-weight-bold resizable-th">
+                  任務名稱
+                  <span class="col-resize-handle" @mousedown="startColumnResize('title', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  期限
+                  <span class="col-resize-handle" @mousedown="startColumnResize('due', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  需求者
+                  <span class="col-resize-handle" @mousedown="startColumnResize('requester', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  公司
+                  <span class="col-resize-handle" @mousedown="startColumnResize('company', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  聯絡方式
+                  <span class="col-resize-handle" @mousedown="startColumnResize('contact', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  來源
+                  <span class="col-resize-handle" @mousedown="startColumnResize('source', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  新增時間
+                  <span class="col-resize-handle" @mousedown="startColumnResize('created', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  狀態
+                  <span class="col-resize-handle" @mousedown="startColumnResize('status', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th text-center">
+                  功能
+                  <span class="col-resize-handle" @mousedown="startColumnResize('action', $event)"></span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1017,49 +1142,59 @@ function fileToBase64Payload(file: File) {
                   {{ formatCreated(todo.createdAt) }}
                 </td>
 
-                <!-- Status column with beautiful custom selection -->
+                <!-- Status column: plain badge display -->
                 <td class="align-center">
-                  <v-select
-                    :model-value="todo.status"
-                    :items="statusColumns"
-                    item-title="label"
-                    item-value="id"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    class="status-select-component"
-                    @update:model-value="moveTodo(todo.id, $event)"
+                  <v-chip
+                    :color="getStatusColor(todo.status)"
+                    size="small"
+                    variant="flat"
+                    class="font-weight-bold text-white"
+                    :prepend-icon="getStatusIcon(todo.status)"
                   >
-                    <template v-slot:selection="{ item }">
-                      <span class="text-body-2 font-weight-medium d-flex align-center">
-                        <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
-                        {{ (item as any).title }}
-                      </span>
-                    </template>
-                    <template v-slot:item="{ item, props }">
-                      <v-list-item v-bind="props">
-                        <template v-slot:title>
-                          <span class="d-flex align-center">
-                            <v-icon :icon="getStatusIcon((item as any).value)" class="mr-1" size="small"></v-icon>
-                            {{ (item as any).title }}
-                          </span>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-select>
+                    {{ statusColumns.find((column) => column.id === todo.status)?.label }}
+                  </v-chip>
                 </td>
 
                 <!-- Action column -->
                 <td class="text-center align-center">
-                  <v-btn
-                    icon="mdi-delete-outline"
-                    variant="text"
-                    color="grey-darken-1"
-                    size="small"
-                    class="rounded-lg hover-danger"
-                    @click="removeTodo(todo.id)"
-                    title="刪除任務"
-                  ></v-btn>
+                  <div class="d-flex align-center justify-center gap-1">
+                    <v-menu>
+                      <template v-slot:activator="{ props }">
+                        <v-btn
+                          icon="mdi-swap-horizontal"
+                          variant="text"
+                          color="primary"
+                          size="small"
+                          class="rounded-lg"
+                          v-bind="props"
+                          title="切換狀態"
+                        ></v-btn>
+                      </template>
+                      <v-list density="compact">
+                        <v-list-item
+                          v-for="column in statusColumns"
+                          :key="column.id"
+                          :active="todo.status === column.id"
+                          @click="updateTodoStatus(todo.id, column.id)"
+                        >
+                          <template v-slot:prepend>
+                            <v-icon :icon="column.icon" :color="getStatusColor(column.id)" size="small"></v-icon>
+                          </template>
+                          <v-list-item-title>{{ column.label }}</v-list-item-title>
+                        </v-list-item>
+                      </v-list>
+                    </v-menu>
+
+                    <v-btn
+                      icon="mdi-delete-outline"
+                      variant="text"
+                      color="grey-darken-1"
+                      size="small"
+                      class="rounded-lg hover-danger"
+                      @click="removeTodo(todo.id)"
+                      title="刪除任務"
+                    ></v-btn>
+                  </div>
                 </td>
               </tr>
 
@@ -1287,9 +1422,8 @@ body {
   gap: 16px;
 }
 
-.status-select-component {
-  max-width: 150px;
-  background: white;
+.todo-table {
+  table-layout: fixed;
 }
 
 .todo-table th {
@@ -1302,6 +1436,46 @@ body {
 
 .todo-table td {
   border-bottom: 1px solid #f1f5f9 !important;
+  overflow: hidden;
+}
+
+.resizable-th {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 1;
+}
+
+.col-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  right: 3px;
+  width: 2px;
+  height: 60%;
+  border-radius: 1px;
+  background-color: #cbd5e1;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle:active {
+  background-color: rgba(59, 130, 246, 0.35);
+}
+
+.col-resize-handle:hover::after,
+.col-resize-handle:active::after {
+  background-color: #3b82f6;
 }
 
 .todo-table tbody tr {
