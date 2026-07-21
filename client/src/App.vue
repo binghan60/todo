@@ -42,6 +42,8 @@ type DraftItem = {
   confidenceNote: string;
 };
 
+type StoredDraftItem = Omit<DraftItem, "imageUrl">;
+
 type BrowserFileHandle = {
   kind: "file";
   name: string;
@@ -67,15 +69,17 @@ type WindowWithPicker = Window & {
 
 const STORAGE_KEY = "todo-pwa.tasks";
 const PROCESSED_KEY = "todo-pwa.processed-images";
+const DRAFTS_KEY = "todo-pwa.drafts";
 const DB_NAME = "todo-pwa.handles";
 const DB_STORE = "file-handles";
 const DIRECTORY_HANDLE_KEY = "screenshot-directory";
 const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
 
-type ColumnKey = "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
+type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
 
 const defaultColumnWidths: Record<ColumnKey, number> = {
+  sequence: 64,
   title: 260,
   requester: 100,
   company: 120,
@@ -152,6 +156,7 @@ onUnmounted(() => {
 
 watch(todos, saveTodos, { deep: true });
 watch(processedKeys, saveProcessedKeys, { deep: true });
+watch(draftQueue, saveDrafts, { deep: true });
 watch(autoScan, (enabled) => {
   if (enabled) startAutoScan();
   else stopAutoScan();
@@ -174,12 +179,38 @@ function resolveTodoStatus(status: StoredTodo["status"], progressLogs: ProgressL
   return "pending";
 }
 
+function parseStoredTodos(value: string) {
+  try {
+    return (JSON.parse(value) as StoredTodo[]).map(normalizeTodo);
+  } catch {
+    return [];
+  }
+}
+
+function parseStoredProcessedKeys(value: string) {
+  try {
+    return new Set(JSON.parse(value) as string[]);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function parseStoredDrafts(value: string) {
+  try {
+    return (JSON.parse(value) as StoredDraftItem[]).map((draft) => ({ ...draft, imageUrl: "" }));
+  } catch {
+    return [];
+  }
+}
+
 async function loadLocalState() {
   const storedTodos = localStorage.getItem(STORAGE_KEY);
   const storedProcessed = localStorage.getItem(PROCESSED_KEY);
+  const storedDrafts = localStorage.getItem(DRAFTS_KEY);
 
-  if (storedTodos) todos.value = (JSON.parse(storedTodos) as StoredTodo[]).map(normalizeTodo);
-  if (storedProcessed) processedKeys.value = new Set(JSON.parse(storedProcessed) as string[]);
+  if (storedTodos) todos.value = parseStoredTodos(storedTodos);
+  if (storedProcessed) processedKeys.value = parseStoredProcessedKeys(storedProcessed);
+  if (storedDrafts) draftQueue.value = parseStoredDrafts(storedDrafts);
 
   const storedColumnWidths = localStorage.getItem(COLUMN_WIDTHS_KEY);
   if (storedColumnWidths) {
@@ -241,6 +272,11 @@ async function getStoredDirectoryHandle() {
 
 function saveTodos() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(todos.value));
+}
+
+function saveDrafts() {
+  const drafts: StoredDraftItem[] = draftQueue.value.map(({ imageUrl: _imageUrl, ...draft }) => draft);
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
 }
 
 function saveProcessedKeys() {
@@ -622,10 +658,23 @@ const sortedTodos = computed(() => {
 
   return todos.value
     .filter((todo) => statusFilter.value === "all" || todo.status === statusFilter.value)
-    .filter((todo) => !query || todo.title.toLowerCase().includes(query))
+    .filter((todo) => !query || searchableTodoText(todo).includes(query))
     .slice()
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 });
+
+function searchableTodoText(todo: Todo) {
+  return [
+    todo.title,
+    todo.requester,
+    todo.company,
+    todo.contact,
+    ...(todo.progressLogs ?? []).map((log) => log.content),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
 
 function formatCreated(iso: string) {
   const date = new Date(iso);
@@ -932,8 +981,8 @@ function fileToBase64Payload(file: File) {
           </v-card-text>
 
           <!-- Toolbar with tabs and search -->
-          <v-card-text class="d-flex flex-wrap align-center justify-space-between gap-4 border-b py-3 px-4">
-            <v-tabs v-model="statusFilter" color="primary" density="comfortable" class="custom-tabs">
+          <v-card-text class="task-toolbar d-flex flex-wrap align-center justify-space-between gap-4 border-b py-3 px-4">
+            <v-tabs v-model="statusFilter" color="primary" density="comfortable" class="custom-tabs toolbar-tabs">
               <v-tab value="all">
                 全部 ({{ totalCount }})
               </v-tab>
@@ -943,7 +992,7 @@ function fileToBase64Payload(file: File) {
               </v-tab>
             </v-tabs>
 
-            <div class="d-flex align-center gap-2">
+            <div class="toolbar-actions d-flex align-center gap-2">
               <v-tooltip text="將表格每一欄的寬度回復成預設值" location="top">
                 <template v-slot:activator="{ props }">
                   <v-btn
@@ -964,11 +1013,11 @@ function fileToBase64Payload(file: File) {
               <v-text-field
                 v-model="searchQuery"
                 prepend-inner-icon="mdi-magnify"
-                placeholder="搜尋任務名稱..."
+                placeholder="搜尋任務、需求者、公司、聯絡方式或處理紀錄..."
                 variant="outlined"
                 density="compact"
                 hide-details
-                style="max-width: 300px; width: 100%;"
+                class="toolbar-search"
                 clearable
               ></v-text-field>
             </div>
@@ -977,6 +1026,7 @@ function fileToBase64Payload(file: File) {
           <!-- Responsive Tasks Table -->
           <v-table class="todo-table w-100">
             <colgroup>
+              <col :style="{ width: columnWidths.sequence + 'px' }" />
               <col :style="{ width: columnWidths.title + 'px' }" />
               <col :style="{ width: columnWidths.requester + 'px' }" />
               <col :style="{ width: columnWidths.company + 'px' }" />
@@ -987,6 +1037,10 @@ function fileToBase64Payload(file: File) {
             </colgroup>
             <thead>
               <tr>
+                <th class="font-weight-bold resizable-th text-center">
+                  序
+                  <span class="col-resize-handle" @mousedown="startColumnResize('sequence', $event)"></span>
+                </th>
                 <th class="font-weight-bold resizable-th">
                   任務名稱
                   <span class="col-resize-handle" @mousedown="startColumnResize('title', $event)"></span>
@@ -1019,7 +1073,11 @@ function fileToBase64Payload(file: File) {
             </thead>
             <tbody>
               <!-- AI draft rows awaiting confirmation -->
-              <tr v-for="draft in draftQueue" :key="draft.id" class="draft-row">
+              <tr v-for="(draft, draftIndex) in draftQueue" :key="draft.id" class="draft-row">
+                <td class="text-center align-center">
+                  <span class="sequence-badge sequence-badge-draft">待-{{ draftIndex + 1 }}</span>
+                </td>
+
                 <td class="align-center">
                   <div class="draft-input-wrap">
                     <input v-model="draft.title" class="draft-input draft-input-strong" placeholder="任務標題" />
@@ -1084,10 +1142,15 @@ function fileToBase64Payload(file: File) {
               </tr>
 
               <tr
-                v-for="todo in sortedTodos"
+                v-for="(todo, todoIndex) in sortedTodos"
                 :key="todo.id"
                 :class="{ 'row-done bg-sage-50': todo.status === 'done' }"
               >
+                <!-- Sequence column -->
+                <td class="text-center align-center">
+                  <span class="sequence-badge">{{ todoIndex + 1 }}</span>
+                </td>
+
                 <!-- Title column -->
                 <td class="font-weight-bold text-body-2 align-center">
                   <span :class="{ 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
@@ -1187,7 +1250,7 @@ function fileToBase64Payload(file: File) {
               </tr>
 
               <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
-                <td colspan="7" class="text-center py-10 text-grey-darken-1">
+                <td colspan="8" class="text-center py-10 text-grey-darken-1">
                   <v-icon icon="mdi-playlist-remove" size="48" color="muted" class="mb-2"></v-icon>
                   <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
                   <div class="text-caption text-grey">試試看點選右上角的「手動新增」或截圖貼上吧！</div>
@@ -1462,6 +1525,63 @@ body {
   gap: 16px;
 }
 
+
+.task-toolbar {
+  row-gap: 12px !important;
+}
+
+.toolbar-tabs {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.toolbar-actions {
+  flex: 1 1 520px;
+  justify-content: flex-end;
+  min-width: 360px;
+}
+
+.toolbar-search {
+  flex: 1 1 360px;
+  max-width: 520px;
+  min-width: 300px;
+}
+
+@media (max-width: 760px) {
+  .toolbar-actions {
+    flex-basis: 100%;
+    justify-content: stretch;
+    min-width: 0;
+  }
+
+  .toolbar-actions .v-btn {
+    flex: 0 0 auto;
+  }
+
+  .toolbar-search {
+    max-width: none;
+    min-width: 0;
+  }
+}
+
+.sequence-badge {
+  align-items: center;
+  background-color: #f4ede6;
+  border: 1px solid #ead8c5;
+  border-radius: 999px;
+  color: #8a7a6d;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 800;
+  justify-content: center;
+  min-width: 32px;
+  padding: 2px 7px;
+}
+
+.sequence-badge-draft {
+  background-color: #fff8ef;
+  color: #9c8068;
+}
 .todo-table {
   table-layout: fixed;
 }
