@@ -105,7 +105,7 @@ const isScanning = ref(false);
 const autoScan = ref(false);
 const scanIntervalMs = ref(5000);
 const timerId = ref<number | null>(null);
-const geminiModel = ref("gemini-3.5-flash");
+const geminiModel = ref("gemini-3.5-flash-lite");
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -539,7 +539,7 @@ function discardAllDrafts() {
 }
 
 async function callGeminiWithFallback(imageBase64: string, mimeType: string) {
-  const preferredModel = geminiModel.value.trim() || "gemini-3.5-flash";
+  const preferredModel = geminiModel.value.trim() || "gemini-3.5-flash-lite";
   const FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-flash-latest"];
   const models = [preferredModel, ...FALLBACK_MODELS.filter((model) => model !== preferredModel)];
   const errors: string[] = [];
