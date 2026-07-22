@@ -920,7 +920,7 @@ function fileToBase64Payload(file: File) {
               </div>
             </div>
 
-            <!-- Auto/Manual Scanning Controls -->
+            <!-- Manual Scanning Controls (auto scan temporarily hidden) -->
             <div class="d-flex align-center flex-wrap gap-4">
               <input
                 type="file"
@@ -931,6 +931,7 @@ function fileToBase64Payload(file: File) {
               />
 
               <v-switch
+                v-if="false"
                 v-model="autoScan"
                 color="primary"
                 hide-details
@@ -1358,6 +1359,7 @@ function fileToBase64Payload(file: File) {
             </v-btn>
           </div>
 
+          <template v-if="false">
           <v-divider class="my-2"></v-divider>
 
           <!-- Auto scan interval -->
@@ -1382,6 +1384,7 @@ function fileToBase64Payload(file: File) {
           </div>
 
           <v-divider class="my-2"></v-divider>
+          </template>
 
           <!-- System note -->
           <v-alert
