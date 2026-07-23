@@ -18,7 +18,7 @@
 - **資料庫：MongoDB Atlas**（`server/db.mjs`），取代原本的 SQLite 草案。集合：`users`、`todos`、`pushSubscriptions`、`remindersSent`。
 - **會員機制：LINE Login（OAuth2/OIDC）**，多人共用帳號。登入後用 httpOnly cookie 存放簽章 JWT（約 90 天，`server/authMiddleware.mjs`），所有 `/api/todos`、`/api/push`、`/api/gemini` 路由都需要登入。
 - **AI 截圖解析**：呼叫 **Gemini API**（不是 Claude API），多模態圖片輸入，見 `server/index.mjs` 的 `/api/gemini/analyze`。
-- **提醒機制（雙管道）**：`server/reminderJob.mjs` 每 10 分鐘掃描到期待辦，到期前 1 天／1 小時各推播一次：
+- **提醒機制（雙管道）**：待辦事項目前沒有到期時間欄位，`server/reminderJob.mjs` 每 10 分鐘掃描一次，每天台灣時間 08:30 把使用者所有還沒結案的待辦事項統一彙整成一則訊息推播（同一使用者當天只發一次）：
   - **LINE 訊息推播**（`server/linePush.mjs`）：透過與 LINE Login 同一個 Provider 底下的 Messaging API channel 直接推送文字訊息
   - **瀏覽器 Web Push**（`web-push` 套件 + `client/public/sw.js`）：使用者在設定裡開啟「啟用瀏覽器通知」後訂閱
 - **Excel 匯出/匯入**：尚未實作（仍是規劃階段，見下方「資料模型草案」與模組拆解，供未來參考）。

@@ -20,7 +20,6 @@ type Todo = {
   requester?: string;
   company?: string;
   contact?: string;
-  dueTime?: string;
 };
 
 type AiTaskDraft = {
@@ -41,7 +40,6 @@ type DraftItem = {
   sourceImage: string;
   imageUrl: string;
   confidenceNote: string;
-  dueTimeLocal: string;
 };
 
 type CurrentUser = {
@@ -77,9 +75,11 @@ const DB_STORE = "file-handles";
 const DIRECTORY_HANDLE_KEY = "screenshot-directory";
 const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
 const STATUS_FILTER_KEY = "todo-pwa.status-filter";
+const AUTO_SCAN_KEY = "todo-pwa.auto-scan";
+const SCAN_INTERVAL_KEY = "todo-pwa.scan-interval-ms";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
 
-type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "dueTime" | "created" | "status" | "action";
+type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
 
 const defaultColumnWidths: Record<ColumnKey, number> = {
   sequence: 64,
@@ -87,13 +87,12 @@ const defaultColumnWidths: Record<ColumnKey, number> = {
   requester: 100,
   company: 120,
   contact: 130,
-  dueTime: 170,
   created: 150,
   status: 140,
   action: 120,
 };
 
-const TABLE_COLUMN_COUNT = 9;
+const TABLE_COLUMN_COUNT = 8;
 
 const statusColumns: Array<{ id: TodoStatus; label: string; hint: string; icon: string }> = [
   { id: "pending", label: "待辦", hint: "尚未開始處理", icon: "mdi-clock-outline" },
@@ -124,7 +123,6 @@ const todoIdForProgress = ref<string | null>(null);
 
 // Manual add todo form fields
 const newTitle = ref("");
-const newDueTimeLocal = ref("");
 const progressText = ref("");
 const selectedProgressTodo = computed(() => todos.value.find((item) => item.id === todoIdForProgress.value) ?? null);
 
@@ -277,8 +275,12 @@ onUnmounted(() => {
 watch(processedKeys, saveProcessedKeys, { deep: true });
 watch(draftQueue, saveDrafts, { deep: true });
 watch(autoScan, (enabled) => {
+  localStorage.setItem(AUTO_SCAN_KEY, JSON.stringify(enabled));
   if (enabled) startAutoScan();
   else stopAutoScan();
+});
+watch(scanIntervalMs, (value) => {
+  localStorage.setItem(SCAN_INTERVAL_KEY, String(value));
 });
 watch(statusFilter, (value) => {
   localStorage.setItem(STATUS_FILTER_KEY, value);
@@ -321,16 +323,28 @@ async function loadLocalPreferences() {
     statusFilter.value = storedStatusFilter;
   }
 
+  const storedScanInterval = Number(localStorage.getItem(SCAN_INTERVAL_KEY));
+  if (storedScanInterval > 0) scanIntervalMs.value = storedScanInterval;
+
   const storedDirectory = await getStoredDirectoryHandle();
-  if (!storedDirectory) return;
+  if (storedDirectory) {
+    directoryHandle.value = storedDirectory;
+    directoryName.value = storedDirectory.name;
 
-  directoryHandle.value = storedDirectory;
-  directoryName.value = storedDirectory.name;
+    const hasPermission = await ensureDirectoryPermission(storedDirectory, false);
+    scannerStatus.value = hasPermission
+      ? "已載入上次的截圖資料夾，可以直接掃描。"
+      : "已記住上次的資料夾，掃描時可能需要重新允許權限。";
+  }
 
-  const hasPermission = await ensureDirectoryPermission(storedDirectory, false);
-  scannerStatus.value = hasPermission
-    ? "已載入上次的截圖資料夾，可以直接掃描。"
-    : "已記住上次的資料夾，掃描時可能需要重新允許權限。";
+  const storedAutoScan = localStorage.getItem(AUTO_SCAN_KEY);
+  if (storedAutoScan) {
+    try {
+      autoScan.value = JSON.parse(storedAutoScan) === true;
+    } catch {
+      autoScan.value = false;
+    }
+  }
 }
 
 async function fetchTodos() {
@@ -610,7 +624,6 @@ function buildDraftItem(draft: AiTaskDraft, sourceImage: string, imageUrl: strin
     sourceImage,
     imageUrl,
     confidenceNote: sanitizeConfidenceNote(draft.confidence_note),
-    dueTimeLocal: guessToLocalDateTime(draft.due_time_guess),
   };
 }
 
@@ -618,25 +631,6 @@ function sanitizeConfidenceNote(note: string) {
   const normalized = note.trim();
   if (!normalized || /無明確期限|沒有明確期限|未提及期限|期限不明/.test(normalized)) return "";
   return normalized;
-}
-
-function guessToLocalDateTime(guess: string) {
-  if (!guess) return "";
-  const date = new Date(guess);
-  return Number.isNaN(date.getTime()) ? "" : isoToLocalDateTime(date.toISOString());
-}
-
-function isoToLocalDateTime(iso: string) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function localDateTimeToIso(value: string) {
-  if (!value) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 async function createTodoViaApi(body: Record<string, unknown>) {
@@ -665,7 +659,6 @@ async function confirmDraft(id: string) {
       requester: draft.requester || undefined,
       company: draft.company || undefined,
       contact: draft.contact || undefined,
-      dueTime: localDateTimeToIso(draft.dueTimeLocal),
     });
 
     todos.value.unshift(created);
@@ -750,22 +743,12 @@ async function submitManualTodo() {
   if (!title) return;
 
   try {
-    const created = await createTodoViaApi({ title, dueTime: localDateTimeToIso(newDueTimeLocal.value) });
+    const created = await createTodoViaApi({ title });
     todos.value.unshift(created);
     newTitle.value = "";
-    newDueTimeLocal.value = "";
     showAddTaskDialog.value = false;
   } catch (error) {
     apiError.value = error instanceof Error ? error.message : "新增待辦事項失敗";
-  }
-}
-
-async function updateDueTime(todoId: string, localValue: string) {
-  try {
-    const updated = await patchTodo(todoId, { dueTime: localDateTimeToIso(localValue) ?? "" });
-    applyUpdatedTodo(updated);
-  } catch (error) {
-    apiError.value = error instanceof Error ? error.message : "更新到期時間失敗";
   }
 }
 
@@ -1272,7 +1255,6 @@ function fileToBase64Payload(file: File) {
               <col :style="{ width: columnWidths.requester + 'px' }" />
               <col :style="{ width: columnWidths.company + 'px' }" />
               <col :style="{ width: columnWidths.contact + 'px' }" />
-              <col :style="{ width: columnWidths.dueTime + 'px' }" />
               <col :style="{ width: columnWidths.created + 'px' }" />
               <col :style="{ width: columnWidths.status + 'px' }" />
               <col :style="{ width: columnWidths.action + 'px' }" />
@@ -1298,10 +1280,6 @@ function fileToBase64Payload(file: File) {
                 <th class="font-weight-bold resizable-th">
                   聯絡方式
                   <span class="col-resize-handle" @mousedown="startColumnResize('contact', $event)"></span>
-                </th>
-                <th class="font-weight-bold resizable-th">
-                  到期時間
-                  <span class="col-resize-handle" @mousedown="startColumnResize('dueTime', $event)"></span>
                 </th>
                 <th class="font-weight-bold resizable-th">
                   新增時間
@@ -1345,10 +1323,6 @@ function fileToBase64Payload(file: File) {
 
                 <td class="align-center">
                   <input v-model="draft.contact" class="draft-input" placeholder="聯絡方式" />
-                </td>
-
-                <td class="align-center">
-                  <input v-model="draft.dueTimeLocal" type="datetime-local" class="draft-input" />
                 </td>
 
                 <td class="text-caption text-grey align-center">AI 剛辨識</td>
@@ -1445,17 +1419,6 @@ function fileToBase64Payload(file: File) {
                   </a>
                   <span v-else-if="todo.contact" class="text-grey-darken-2">{{ todo.contact }}</span>
                   <span v-else class="text-grey-lighten-1">—</span>
-                </td>
-
-                <!-- Due Time column: editable -->
-                <td class="align-center">
-                  <input
-                    type="datetime-local"
-                    class="draft-input"
-                    :value="isoToLocalDateTime(todo.dueTime || '')"
-                    :disabled="todo.status === 'done'"
-                    @change="updateDueTime(todo.id, ($event.target as HTMLInputElement).value)"
-                  />
                 </td>
 
                 <!-- Created Date -->
@@ -1684,13 +1647,6 @@ function fileToBase64Payload(file: File) {
               required
               autofocus
               :rules="[v => !!v || '任務名稱為必填']"
-            ></v-text-field>
-            <v-text-field
-              v-model="newDueTimeLocal"
-              type="datetime-local"
-              label="到期時間 (選填)"
-              variant="outlined"
-              density="comfortable"
             ></v-text-field>
           </v-card-text>
           

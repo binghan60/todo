@@ -5,11 +5,10 @@ import { sendLineMessage } from "./linePush.mjs";
 
 const POLL_INTERVAL_MS = 10 * 60 * 1000; // 每 10 分鐘掃描一次
 const CHECK_WINDOW_MS = 15 * 60 * 1000; // 視窗要比掃描間隔寬，避免漏掃
+const TIMEZONE = "Asia/Taipei";
 
-const REMINDER_RULES = [
-  { type: "1_day_before", thresholdMs: 24 * 60 * 60 * 1000 },
-  { type: "1_hour_before", thresholdMs: 60 * 60 * 1000 },
-];
+// 每天固定在這個時間，把使用者還沒結案的待辦事項統一彙整提醒一次
+const DAILY_DIGEST_MINUTES_SINCE_MIDNIGHT = 8 * 60 + 30; // 08:30
 
 let vapidConfigured = false;
 
@@ -32,35 +31,37 @@ function configureVapid() {
 }
 
 async function runOnce() {
-  const now = Date.now();
+  const { dateStr, minutesSinceMidnight } = getTaipeiParts();
+  const isWithinWindow =
+    minutesSinceMidnight >= DAILY_DIGEST_MINUTES_SINCE_MIDNIGHT &&
+    minutesSinceMidnight < DAILY_DIGEST_MINUTES_SINCE_MIDNIGHT + CHECK_WINDOW_MS / 60000;
+  if (!isWithinWindow) return;
+
   const pendingTodos = await todos()
-    .find({ status: { $ne: "done" }, dueTime: { $exists: true, $ne: "" } })
+    .find({ status: { $ne: "done" } })
     .toArray();
 
+  const todosByUser = new Map();
   for (const todo of pendingTodos) {
-    const dueTime = new Date(todo.dueTime).getTime();
-    if (Number.isNaN(dueTime)) continue;
+    if (!todosByUser.has(todo.userId)) todosByUser.set(todo.userId, []);
+    todosByUser.get(todo.userId).push(todo);
+  }
 
-    const msUntilDue = dueTime - now;
-
-    for (const rule of REMINDER_RULES) {
-      const isWithinWindow = msUntilDue <= rule.thresholdMs && msUntilDue > rule.thresholdMs - CHECK_WINDOW_MS;
-      if (!isWithinWindow) continue;
-
-      await maybeSendReminder(todo, rule.type);
-    }
+  for (const [userId, userTodos] of todosByUser) {
+    await maybeSendDigestForUser(userId, userTodos, dateStr);
   }
 }
 
-async function maybeSendReminder(todo, reminderType) {
-  const alreadySent = await remindersSent().findOne({ todoId: todo._id.toString(), reminderType });
+async function maybeSendDigestForUser(userId, userTodos, dateStr) {
+  const digestId = `digest:${userId}:${dateStr}`;
+  const alreadySent = await remindersSent().findOne({ todoId: digestId, reminderType: "daily_digest" });
   if (alreadySent) return;
 
   try {
     await remindersSent().insertOne({
-      todoId: todo._id.toString(),
-      userId: todo.userId,
-      reminderType,
+      todoId: digestId,
+      userId,
+      reminderType: "daily_digest",
       sentAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -68,8 +69,27 @@ async function maybeSendReminder(todo, reminderType) {
     throw error;
   }
 
-  const message = `提醒：「${todo.title}」將於 ${formatDueTime(todo.dueTime)} 到期`;
-  await Promise.allSettled([sendLinePushIfLinked(todo.userId, message), sendWebPushIfSubscribed(todo.userId, todo.title, message)]);
+  const titles = userTodos.map((todo) => `‧${todo.title}`).join("\n");
+  const message = `早安！你有 ${userTodos.length} 筆還沒結案的待辦事項：\n${titles}`;
+  await Promise.allSettled([sendLinePushIfLinked(userId, message), sendWebPushIfSubscribed(userId, "待辦提醒", message)]);
+}
+
+function getTaipeiParts() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const get = (type) => parts.find((part) => part.type === type)?.value ?? "00";
+  const dateStr = `${get("year")}-${get("month")}-${get("day")}`;
+  const minutesSinceMidnight = Number(get("hour")) * 60 + Number(get("minute"));
+
+  return { dateStr, minutesSinceMidnight };
 }
 
 async function sendLinePushIfLinked(userId, message) {
@@ -87,7 +107,7 @@ async function sendWebPushIfSubscribed(userId, title, message) {
   if (!vapidConfigured) return;
 
   const subscriptions = await pushSubscriptions().find({ userId, type: "webpush" }).toArray();
-  const payload = JSON.stringify({ title: "待辦提醒", body: message });
+  const payload = JSON.stringify({ title, body: message });
 
   for (const record of subscriptions) {
     try {
@@ -100,18 +120,4 @@ async function sendWebPushIfSubscribed(userId, title, message) {
       }
     }
   }
-}
-
-function formatDueTime(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-
-  return date.toLocaleString("zh-TW", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
 }

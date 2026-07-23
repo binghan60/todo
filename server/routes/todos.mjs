@@ -5,7 +5,7 @@ import { todos } from "../db.mjs";
 
 export const todosRouter = Router();
 
-const EDITABLE_FIELDS = ["title", "status", "dueTime", "closedAt", "requester", "company", "contact"];
+const EDITABLE_FIELDS = ["title", "status", "closedAt", "requester", "company", "contact"];
 
 todosRouter.get("/", async (req, res) => {
   const items = await todos()
@@ -17,7 +17,7 @@ todosRouter.get("/", async (req, res) => {
 });
 
 todosRouter.post("/", async (req, res) => {
-  const { title, sourceImage, requester, company, contact, dueTime } = req.body ?? {};
+  const { title, sourceImage, requester, company, contact } = req.body ?? {};
   const trimmedTitle = typeof title === "string" ? title.trim() : "";
 
   if (!trimmedTitle) {
@@ -36,7 +36,6 @@ todosRouter.post("/", async (req, res) => {
     requester: requester || undefined,
     company: company || undefined,
     contact: contact || undefined,
-    dueTime: dueTime || undefined,
   };
 
   const result = await todos().insertOne(doc);
@@ -103,7 +102,6 @@ function toClientTodo(doc) {
     id: doc._id.toString(),
     title: doc.title,
     status: doc.status,
-    dueTime: doc.dueTime || undefined,
     createdAt: doc.createdAt,
     closedAt: doc.closedAt || undefined,
     sourceImage: doc.sourceImage || undefined,
