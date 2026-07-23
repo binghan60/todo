@@ -144,6 +144,8 @@ const apiError = ref("");
 // Web Push state
 const webPushEnabled = ref(false);
 const webPushBusy = ref(false);
+const testPushBusy = ref(false);
+const pushTestMessage = ref("");
 
 const totalCount = computed(() => todos.value.length);
 const doneCount = computed(() => countByStatus("done"));
@@ -252,6 +254,26 @@ async function disableWebPush() {
     webPushEnabled.value = false;
   } finally {
     webPushBusy.value = false;
+  }
+}
+
+async function testPush() {
+  testPushBusy.value = true;
+  pushTestMessage.value = "";
+  try {
+    const response = await fetch("/api/push/test", { method: "POST" });
+    if (!response.ok) throw new Error("測試推播失敗");
+
+    const result = await response.json();
+    const parts = [
+      result.lineSent ? "LINE 訊息已送出" : "LINE 未設定或尚未加好友",
+      result.webPushCount > 0 ? `瀏覽器通知已送出（${result.webPushCount} 台裝置）` : "瀏覽器通知未訂閱",
+    ];
+    pushTestMessage.value = parts.join("；");
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "測試推播失敗";
+  } finally {
+    testPushBusy.value = false;
   }
 }
 
@@ -1594,8 +1616,19 @@ function fileToBase64Payload(file: File) {
               @update:model-value="(v) => (v ? enableWebPush() : disableWebPush())"
             ></v-switch>
             <div class="text-caption text-grey-darken-1 mt-1">
-              到期前 1 天與 1 小時會自動提醒；若已透過 LINE 登入，也會同時收到 LINE 訊息推播。
+              每天早上 8:30 會自動彙整還沒結案的待辦事項提醒一次；若已透過 LINE 登入，也會同時收到 LINE 訊息推播。
             </div>
+            <v-btn
+              variant="outlined"
+              color="primary"
+              size="small"
+              class="font-weight-bold rounded-lg text-none mt-2"
+              :loading="testPushBusy"
+              @click="testPush"
+            >
+              傳送測試通知
+            </v-btn>
+            <div v-if="pushTestMessage" class="text-caption text-success mt-1">{{ pushTestMessage }}</div>
           </div>
 
           <v-divider class="my-2"></v-divider>
