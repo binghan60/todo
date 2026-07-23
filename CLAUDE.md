@@ -9,15 +9,35 @@
 3. 狀態管理：待處理 / 進行中 / 結案，其中「進行中」可以再細分多個自訂子階段
 4. 使用者不懂程式，介面必須簡單易懂；資料要能一鍵匯出成 Excel 供檢視/備份/列印
 
-## 技術棧決策
+## 技術棧決策（實際現況，非 Tauri 桌面版）
 
-- **框架：Tauri**（不是 Electron）。前端用網頁技術（Vue 3 + TypeScript，使用 Composition API），打包成 Windows/Mac 桌面 EXE/App，體積小、啟動快，且能拿到系統層級權限（背景常駐、系統通知、剪貼簿讀取）。
-- **內部資料庫：SQLite**（用 Tauri 的 SQL plugin 或 rusqlite），單一檔案，不需要額外安裝伺服器，讀寫穩定不會有檔案鎖定問題。
-- **Excel 匯出/匯入**：用 `exceljs`（前端 JS）或 Rust 端的 `rust_xlsxwriter` 產生 .xlsx。**Excel 只作為匯出檢視/備份/匯入工具，不是即時運作的資料來源**，理由已在專案討論中確認：Excel 檔案若被使用者開啟編輯，程式無法寫入，會與截圖自動解析、狀態更新、背景提醒等功能衝突。
-- **AI 截圖解析**：呼叫 Claude API（多模態，圖片輸入 + 文字 prompt），要求模型回傳結構化 JSON 陣列（一張截圖可能有多筆待辦）。
-- **提醒機制**：Tauri 背景 timer 定期（例如每分鐘）掃描 SQLite 中即將到期的項目，觸發系統原生通知（Tauri notification plugin）。
+> 這個專案最初規劃是 Tauri 桌面 App + SQLite（見下方「資料模型草案」），但實際開發演變成瀏覽器版網頁 App。以下才是目前真正的架構，之後的開發都應該基於這個現況：
 
-## 資料模型（SQLite schema 草案）
+- **前端**：Vue 3 + TypeScript（Composition API）+ Vuetify，單頁應用，見 `client/src/App.vue`。用 Vite 開發/打包。
+- **後端**：Express（`server/index.mjs` 及 `server/routes/*.mjs`），同時提供靜態檔案（`client/dist`）與 API，部署方式見 `zbpack.json`（Zeabur 類 buildpack）。
+- **資料庫：MongoDB Atlas**（`server/db.mjs`），取代原本的 SQLite 草案。集合：`users`、`todos`、`pushSubscriptions`、`remindersSent`。
+- **會員機制：LINE Login（OAuth2/OIDC）**，多人共用帳號。登入後用 httpOnly cookie 存放簽章 JWT（約 90 天，`server/authMiddleware.mjs`），所有 `/api/todos`、`/api/push`、`/api/gemini` 路由都需要登入。
+- **AI 截圖解析**：呼叫 **Gemini API**（不是 Claude API），多模態圖片輸入，見 `server/index.mjs` 的 `/api/gemini/analyze`。
+- **提醒機制（雙管道）**：`server/reminderJob.mjs` 每 10 分鐘掃描到期待辦，到期前 1 天／1 小時各推播一次：
+  - **LINE 訊息推播**（`server/linePush.mjs`）：透過與 LINE Login 同一個 Provider 底下的 Messaging API channel 直接推送文字訊息
+  - **瀏覽器 Web Push**（`web-push` 套件 + `client/public/sw.js`）：使用者在設定裡開啟「啟用瀏覽器通知」後訂閱
+- **Excel 匯出/匯入**：尚未實作（仍是規劃階段，見下方「資料模型草案」與模組拆解，供未來參考）。
+- **看板 UI / 自訂階段模板**：尚未實作，目前狀態管理只有 `pending` / `in_progress` / `done` 三種加上一個處理紀錄清單（`progressLogs`），沒有可自訂子階段。
+
+### 環境變數（`.env`，範本見 `.env.example`）
+
+| 變數 | 用途 |
+|---|---|
+| `GEMINI_API_KEY` | 截圖解析用的 Gemini API 金鑰 |
+| `MONGODB_URI` | MongoDB Atlas 連線字串 |
+| `JWT_SECRET` | 簽發登入 session cookie 用 |
+| `LINE_LOGIN_CHANNEL_ID` / `LINE_LOGIN_CHANNEL_SECRET` / `LINE_LOGIN_CALLBACK_URL` | LINE Login channel 設定 |
+| `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | 與 Login channel 同 Provider 的 Messaging API channel，用來推播提醒 |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push 用的 VAPID 金鑰（`npx web-push generate-vapid-keys` 產生） |
+
+## 資料模型草案（歷史規劃，尚未在目前架構中實作）
+
+以下 SQLite schema 是專案最初的規劃草案，目前並未採用（現況請看上面「技術棧決策」段落的 MongoDB 集合設計），保留在這裡是為了記錄 Excel 匯出/匯入、看板、自訂階段模板等**尚未實作**功能的原始設計意圖，未來要做這些功能時可以參考。
 
 ```sql
 CREATE TABLE todos (

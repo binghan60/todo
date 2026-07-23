@@ -9,6 +9,10 @@
     "check": "node --check index.mjs"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.5.0",
+    "web-push": "^3.6.7"
   }
 }

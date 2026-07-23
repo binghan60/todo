@@ -30,3 +30,24 @@ self.addEventListener("fetch", (event) => {
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/index.html"))),
   );
 });
+
+self.addEventListener("push", (event) => {
+  const data = event.data?.json() ?? { title: "待辦提醒", body: "" };
+  event.waitUntil(
+    self.registration.showNotification(data.title || "待辦提醒", {
+      body: data.body || "",
+      icon: "/vite.svg",
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window" }).then((clients) => {
+      const existing = clients.find((client) => "focus" in client);
+      if (existing) return existing.focus();
+      return self.clients.openWindow("/");
+    }),
+  );
+});

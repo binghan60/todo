@@ -14,9 +14,9 @@ if not exist ".env" (
   echo.
 )
 
-start "Gemini Todo API" cmd /k "cd /d ""%~dp0server"" && npm.cmd run dev"
-start "Gemini Todo Frontend" cmd /k "cd /d ""%~dp0client"" && npm.cmd run dev"
+start "" /b cmd /c "cd /d ""%~dp0server"" && npm.cmd run dev"
+start "" /b cmd /c "cd /d ""%~dp0client"" && npm.cmd run dev"
 
-echo Started API and frontend in separate windows.
-echo Close those windows to stop the servers.
-pause
+echo Started API and frontend in this window (logs will interleave below).
+echo Close this window to stop both servers.
+pause >nul

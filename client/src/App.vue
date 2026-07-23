@@ -20,6 +20,7 @@ type Todo = {
   requester?: string;
   company?: string;
   contact?: string;
+  dueTime?: string;
 };
 
 type AiTaskDraft = {
@@ -40,6 +41,13 @@ type DraftItem = {
   sourceImage: string;
   imageUrl: string;
   confidenceNote: string;
+  dueTimeLocal: string;
+};
+
+type CurrentUser = {
+  id: string;
+  displayName: string;
+  pictureUrl: string;
 };
 
 type StoredDraftItem = Omit<DraftItem, "imageUrl">;
@@ -58,16 +66,10 @@ type BrowserDirectoryHandle = {
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
 };
 
-type StoredTodo = Omit<Todo, "status" | "progressLogs"> & {
-  status?: TodoStatus | "follow_up";
-  progressLogs?: ProgressLog[];
-};
-
 type WindowWithPicker = Window & {
   showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>;
 };
 
-const STORAGE_KEY = "todo-pwa.tasks";
 const PROCESSED_KEY = "todo-pwa.processed-images";
 const DRAFTS_KEY = "todo-pwa.drafts";
 const DB_NAME = "todo-pwa.handles";
@@ -77,7 +79,7 @@ const COLUMN_WIDTHS_KEY = "todo-pwa.column-widths";
 const STATUS_FILTER_KEY = "todo-pwa.status-filter";
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]);
 
-type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "created" | "status" | "action";
+type ColumnKey = "sequence" | "title" | "requester" | "company" | "contact" | "dueTime" | "created" | "status" | "action";
 
 const defaultColumnWidths: Record<ColumnKey, number> = {
   sequence: 64,
@@ -85,10 +87,13 @@ const defaultColumnWidths: Record<ColumnKey, number> = {
   requester: 100,
   company: 120,
   contact: 130,
+  dueTime: 170,
   created: 150,
   status: 140,
   action: 120,
 };
+
+const TABLE_COLUMN_COUNT = 9;
 
 const statusColumns: Array<{ id: TodoStatus; label: string; hint: string; icon: string }> = [
   { id: "pending", label: "待辦", hint: "尚未開始處理", icon: "mdi-clock-outline" },
@@ -119,6 +124,7 @@ const todoIdForProgress = ref<string | null>(null);
 
 // Manual add todo form fields
 const newTitle = ref("");
+const newDueTimeLocal = ref("");
 const progressText = ref("");
 const selectedProgressTodo = computed(() => todos.value.find((item) => item.id === todoIdForProgress.value) ?? null);
 
@@ -132,6 +138,14 @@ const resizingColumn = ref<ColumnKey | null>(null);
 let resizeStartX = 0;
 let resizeStartWidth = 0;
 
+// Auth state
+const currentUser = ref<CurrentUser | null>(null);
+const authChecked = ref(false);
+const apiError = ref("");
+
+// Web Push state
+const webPushEnabled = ref(false);
+const webPushBusy = ref(false);
 
 const totalCount = computed(() => todos.value.length);
 const doneCount = computed(() => countByStatus("done"));
@@ -139,11 +153,116 @@ const inProgressCount = computed(() => countByStatus("in_progress"));
 const pendingCount = computed(() => countByStatus("pending"));
 
 onMounted(() => {
-  void loadLocalState();
+  void bootstrap();
   window.addEventListener("paste", onWindowPaste);
   window.addEventListener("dragover", onDragOver);
   window.addEventListener("drop", onDrop);
 });
+
+async function bootstrap() {
+  await checkAuth();
+  if (!currentUser.value) return;
+
+  await loadLocalPreferences();
+  await fetchTodos();
+  await checkWebPushSubscription();
+}
+
+async function checkAuth() {
+  try {
+    const response = await fetch("/api/auth/me");
+    currentUser.value = response.ok ? await response.json() : null;
+  } catch {
+    currentUser.value = null;
+  } finally {
+    authChecked.value = true;
+  }
+}
+
+function loginWithLine() {
+  window.location.href = "/api/auth/line/login";
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  currentUser.value = null;
+  todos.value = [];
+}
+
+async function checkWebPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+  const registration = await navigator.serviceWorker.getRegistration();
+  const subscription = await registration?.pushManager.getSubscription();
+  webPushEnabled.value = !!subscription;
+}
+
+async function enableWebPush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    apiError.value = "目前瀏覽器不支援通知功能。";
+    return;
+  }
+
+  webPushBusy.value = true;
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      apiError.value = "請允許瀏覽器通知權限才能開啟提醒。";
+      return;
+    }
+
+    const keyResponse = await fetch("/api/push/vapid-public-key");
+    const { publicKey } = await keyResponse.json();
+    if (!publicKey) {
+      apiError.value = "伺服器尚未設定通知金鑰。";
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.register("/sw.js");
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+
+    await fetch("/api/push/webpush/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(subscription),
+    });
+
+    webPushEnabled.value = true;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "開啟瀏覽器通知失敗";
+  } finally {
+    webPushBusy.value = false;
+  }
+}
+
+async function disableWebPush() {
+  webPushBusy.value = true;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager.getSubscription();
+    if (subscription) {
+      await fetch("/api/push/webpush/unsubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      });
+      await subscription.unsubscribe();
+    }
+    webPushEnabled.value = false;
+  } finally {
+    webPushBusy.value = false;
+  }
+}
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
 
 onUnmounted(() => {
   stopAutoScan();
@@ -155,7 +274,6 @@ onUnmounted(() => {
   draftQueue.value.forEach((draft) => URL.revokeObjectURL(draft.imageUrl));
 });
 
-watch(todos, saveTodos, { deep: true });
 watch(processedKeys, saveProcessedKeys, { deep: true });
 watch(draftQueue, saveDrafts, { deep: true });
 watch(autoScan, (enabled) => {
@@ -165,31 +283,6 @@ watch(autoScan, (enabled) => {
 watch(statusFilter, (value) => {
   localStorage.setItem(STATUS_FILTER_KEY, value);
 });
-
-function normalizeTodo(todo: StoredTodo): Todo {
-  const progressLogs = Array.isArray(todo.progressLogs) ? todo.progressLogs : [];
-  const status = resolveTodoStatus(todo.status, progressLogs);
-
-  return {
-    ...todo,
-    status,
-    progressLogs,
-  };
-}
-
-function resolveTodoStatus(status: StoredTodo["status"], progressLogs: ProgressLog[]): TodoStatus {
-  if (status === "done") return "done";
-  if (status === "in_progress" || status === "follow_up" || progressLogs.length > 0) return "in_progress";
-  return "pending";
-}
-
-function parseStoredTodos(value: string) {
-  try {
-    return (JSON.parse(value) as StoredTodo[]).map(normalizeTodo);
-  } catch {
-    return [];
-  }
-}
 
 function parseStoredProcessedKeys(value: string) {
   try {
@@ -207,12 +300,10 @@ function parseStoredDrafts(value: string) {
   }
 }
 
-async function loadLocalState() {
-  const storedTodos = localStorage.getItem(STORAGE_KEY);
+async function loadLocalPreferences() {
   const storedProcessed = localStorage.getItem(PROCESSED_KEY);
   const storedDrafts = localStorage.getItem(DRAFTS_KEY);
 
-  if (storedTodos) todos.value = parseStoredTodos(storedTodos);
   if (storedProcessed) processedKeys.value = parseStoredProcessedKeys(storedProcessed);
   if (storedDrafts) draftQueue.value = parseStoredDrafts(storedDrafts);
 
@@ -240,6 +331,37 @@ async function loadLocalState() {
   scannerStatus.value = hasPermission
     ? "已載入上次的截圖資料夾，可以直接掃描。"
     : "已記住上次的資料夾，掃描時可能需要重新允許權限。";
+}
+
+async function fetchTodos() {
+  try {
+    const response = await fetch("/api/todos");
+    if (!response.ok) throw new Error("讀取待辦事項失敗");
+    todos.value = await response.json();
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "讀取待辦事項失敗";
+  }
+}
+
+function applyUpdatedTodo(updated: Todo) {
+  const index = todos.value.findIndex((item) => item.id === updated.id);
+  if (index === -1) return;
+  todos.value.splice(index, 1, updated);
+}
+
+async function patchTodo(todoId: string, body: Record<string, unknown>) {
+  const response = await fetch(`/api/todos/${todoId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.error ?? "更新待辦事項失敗");
+  }
+
+  return (await response.json()) as Todo;
 }
 
 // Ensure database handles are initialized properly
@@ -277,10 +399,6 @@ async function getStoredDirectoryHandle() {
 
   db.close();
   return handle;
-}
-
-function saveTodos() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(todos.value));
 }
 
 function saveDrafts() {
@@ -352,12 +470,14 @@ async function scanLatestImage() {
     return;
   }
 
+  isScanning.value = true;
+
   if (!(await ensureDirectoryPermission(directoryHandle.value))) {
     scannerStatus.value = "資料夾權限尚未允許，請重新授權。";
+    isScanning.value = false;
     return;
   }
 
-  isScanning.value = true;
   scannerStatus.value = "正在掃描新圖片...";
 
   try {
@@ -490,6 +610,7 @@ function buildDraftItem(draft: AiTaskDraft, sourceImage: string, imageUrl: strin
     sourceImage,
     imageUrl,
     confidenceNote: sanitizeConfidenceNote(draft.confidence_note),
+    dueTimeLocal: guessToLocalDateTime(draft.due_time_guess),
   };
 }
 
@@ -499,28 +620,64 @@ function sanitizeConfidenceNote(note: string) {
   return normalized;
 }
 
-function confirmDraft(id: string) {
+function guessToLocalDateTime(guess: string) {
+  if (!guess) return "";
+  const date = new Date(guess);
+  return Number.isNaN(date.getTime()) ? "" : isoToLocalDateTime(date.toISOString());
+}
+
+function isoToLocalDateTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localDateTimeToIso(value: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+async function createTodoViaApi(body: Record<string, unknown>) {
+  const response = await fetch("/api/todos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.error ?? "新增待辦事項失敗");
+  }
+
+  return (await response.json()) as Todo;
+}
+
+async function confirmDraft(id: string) {
   const draft = draftQueue.value.find((item) => item.id === id);
   if (!draft) return;
 
-  todos.value.unshift({
-    id: draft.id,
-    title: draft.title.trim() || "未命名任務",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    progressLogs: [],
-    sourceImage: draft.sourceImage,
-    requester: draft.requester || undefined,
-    company: draft.company || undefined,
-    contact: draft.contact || undefined,
-  });
+  try {
+    const created = await createTodoViaApi({
+      title: draft.title.trim() || "未命名任務",
+      sourceImage: draft.sourceImage,
+      requester: draft.requester || undefined,
+      company: draft.company || undefined,
+      contact: draft.contact || undefined,
+      dueTime: localDateTimeToIso(draft.dueTimeLocal),
+    });
 
-  URL.revokeObjectURL(draft.imageUrl);
-  draftQueue.value = draftQueue.value.filter((item) => item.id !== id);
+    todos.value.unshift(created);
+    URL.revokeObjectURL(draft.imageUrl);
+    draftQueue.value = draftQueue.value.filter((item) => item.id !== id);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "新增待辦事項失敗";
+  }
 }
 
-function confirmAllDrafts() {
-  [...draftQueue.value].forEach((draft) => confirmDraft(draft.id));
+async function confirmAllDrafts() {
+  await Promise.all([...draftQueue.value].map((draft) => confirmDraft(draft.id)));
 }
 
 function discardDraft(id: string) {
@@ -588,24 +745,28 @@ function safeJsonParse(text: string) {
   }
 }
 
-function submitManualTodo() {
+async function submitManualTodo() {
   const title = newTitle.value.trim();
   if (!title) return;
 
-  createTodo(title);
-  newTitle.value = "";
-  showAddTaskDialog.value = false;
+  try {
+    const created = await createTodoViaApi({ title, dueTime: localDateTimeToIso(newDueTimeLocal.value) });
+    todos.value.unshift(created);
+    newTitle.value = "";
+    newDueTimeLocal.value = "";
+    showAddTaskDialog.value = false;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "新增待辦事項失敗";
+  }
 }
 
-function createTodo(title: string, sourceImage = "") {
-  todos.value.unshift({
-    id: crypto.randomUUID(),
-    title,
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    progressLogs: [],
-    sourceImage,
-  });
+async function updateDueTime(todoId: string, localValue: string) {
+  try {
+    const updated = await patchTodo(todoId, { dueTime: localDateTimeToIso(localValue) ?? "" });
+    applyUpdatedTodo(updated);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "更新到期時間失敗";
+  }
 }
 
 function openProgressDialog(todoId: string) {
@@ -617,27 +778,29 @@ function openProgressDialog(todoId: string) {
   showProgressDialog.value = true;
 }
 
-function submitProgressUpdate() {
+async function submitProgressUpdate() {
   const content = progressText.value.trim();
   const todo = todos.value.find((item) => item.id === todoIdForProgress.value);
   if (!content || !todo || todo.status === "done") return;
 
-  todo.progressLogs = [
-    ...(todo.progressLogs ?? []),
-    { id: crypto.randomUUID(), content, createdAt: new Date().toISOString() },
-  ];
-  todo.status = "in_progress";
-  progressText.value = "";
-  todoIdForProgress.value = null;
-  showProgressDialog.value = false;
+  try {
+    const updated = await patchTodo(todo.id, { progressLogContent: content });
+    applyUpdatedTodo(updated);
+    progressText.value = "";
+    todoIdForProgress.value = null;
+    showProgressDialog.value = false;
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "新增處理進度失敗";
+  }
 }
 
-function closeTodo(todoId: string) {
-  const todo = todos.value.find((item) => item.id === todoId);
-  if (!todo) return;
-
-  todo.status = "done";
-  todo.closedAt = new Date().toISOString();
+async function closeTodo(todoId: string) {
+  try {
+    const updated = await patchTodo(todoId, { status: "done", closedAt: new Date().toISOString() });
+    applyUpdatedTodo(updated);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "結案失敗";
+  }
 }
 
 function latestProgress(todo: Todo) {
@@ -668,12 +831,20 @@ function removeTodo(todoId: string) {
   showDeleteConfirmDialog.value = true;
 }
 
-function confirmDeleteTodo() {
-  if (todoIdToDelete.value) {
-    todos.value = todos.value.filter((todo) => todo.id !== todoIdToDelete.value);
+async function confirmDeleteTodo() {
+  const todoId = todoIdToDelete.value;
+  showDeleteConfirmDialog.value = false;
+  if (!todoId) return;
+
+  try {
+    const response = await fetch(`/api/todos/${todoId}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("刪除待辦事項失敗");
+    todos.value = todos.value.filter((todo) => todo.id !== todoId);
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : "刪除待辦事項失敗";
+  } finally {
     todoIdToDelete.value = null;
   }
-  showDeleteConfirmDialog.value = false;
 }
 
 function countByStatus(status: TodoStatus) {
@@ -781,6 +952,24 @@ function fileToBase64Payload(file: File) {
 
 <template>
   <v-app class="bg-warm-50">
+    <div v-if="!authChecked" class="d-flex align-center justify-center" style="height: 100vh;">
+      <v-progress-circular indeterminate color="primary" size="40"></v-progress-circular>
+    </div>
+
+    <div v-else-if="!currentUser" class="d-flex align-center justify-center bg-warm-page" style="height: 100vh;">
+      <v-card class="rounded-lg pa-8 text-center" max-width="380" border flat>
+        <v-avatar color="primary-lighten-5" rounded="lg" size="56" class="mb-4">
+          <v-icon icon="mdi-checkbox-marked-circle-auto-outline" color="primary" size="32"></v-icon>
+        </v-avatar>
+        <div class="text-h6 font-weight-black text-slate-800 mb-2">任務中控台</div>
+        <div class="text-body-2 text-grey-darken-1 mb-6">請先登入才能使用待辦事項與雲端同步功能</div>
+        <v-btn color="success" variant="flat" block size="large" class="font-weight-bold rounded-lg text-none" prepend-icon="mdi-chat" @click="loginWithLine">
+          使用 LINE 登入
+        </v-btn>
+      </v-card>
+    </div>
+
+    <template v-else>
     <!-- Navbar / AppBar -->
     <v-app-bar flat border color="surface" class="px-md-6 border-b px-2 warm-app-bar">
       <div class="d-flex align-center">
@@ -813,15 +1002,40 @@ function fileToBase64Payload(file: File) {
             icon="mdi-cog-outline"
             variant="outlined"
             color="muted"
-            class="rounded-lg"
+            class="rounded-lg mr-2"
             @click="showSettingsDialog = true"
           ></v-btn>
         </template>
       </v-tooltip>
+
+      <v-menu v-if="currentUser">
+        <template v-slot:activator="{ props }">
+          <v-avatar v-bind="props" size="36" class="cursor-pointer">
+            <v-img v-if="currentUser.pictureUrl" :src="currentUser.pictureUrl" :alt="currentUser.displayName"></v-img>
+            <v-icon v-else icon="mdi-account-circle" size="36"></v-icon>
+          </v-avatar>
+        </template>
+        <v-list density="compact">
+          <v-list-item :title="currentUser.displayName" subtitle="已登入"></v-list-item>
+          <v-list-item title="登出" prepend-icon="mdi-logout" @click="logout"></v-list-item>
+        </v-list>
+      </v-menu>
     </v-app-bar>
 
     <v-main class="bg-warm-page">
       <v-container fluid class="pa-4 pa-md-6 max-width-wrapper">
+        <v-alert
+          v-if="apiError"
+          type="error"
+          variant="tonal"
+          density="compact"
+          closable
+          class="mb-4 rounded-lg text-caption"
+          @click:close="apiError = ''"
+        >
+          {{ apiError }}
+        </v-alert>
+
         <!-- Stats Dashboard -->
         <div class="stats-grid mb-6">
           <!-- Stat Cards -->
@@ -931,7 +1145,6 @@ function fileToBase64Payload(file: File) {
               />
 
               <v-switch
-                v-if="false"
                 v-model="autoScan"
                 color="primary"
                 hide-details
@@ -1059,6 +1272,7 @@ function fileToBase64Payload(file: File) {
               <col :style="{ width: columnWidths.requester + 'px' }" />
               <col :style="{ width: columnWidths.company + 'px' }" />
               <col :style="{ width: columnWidths.contact + 'px' }" />
+              <col :style="{ width: columnWidths.dueTime + 'px' }" />
               <col :style="{ width: columnWidths.created + 'px' }" />
               <col :style="{ width: columnWidths.status + 'px' }" />
               <col :style="{ width: columnWidths.action + 'px' }" />
@@ -1084,6 +1298,10 @@ function fileToBase64Payload(file: File) {
                 <th class="font-weight-bold resizable-th">
                   聯絡方式
                   <span class="col-resize-handle" @mousedown="startColumnResize('contact', $event)"></span>
+                </th>
+                <th class="font-weight-bold resizable-th">
+                  到期時間
+                  <span class="col-resize-handle" @mousedown="startColumnResize('dueTime', $event)"></span>
                 </th>
                 <th class="font-weight-bold resizable-th">
                   新增時間
@@ -1127,6 +1345,10 @@ function fileToBase64Payload(file: File) {
 
                 <td class="align-center">
                   <input v-model="draft.contact" class="draft-input" placeholder="聯絡方式" />
+                </td>
+
+                <td class="align-center">
+                  <input v-model="draft.dueTimeLocal" type="datetime-local" class="draft-input" />
                 </td>
 
                 <td class="text-caption text-grey align-center">AI 剛辨識</td>
@@ -1225,6 +1447,17 @@ function fileToBase64Payload(file: File) {
                   <span v-else class="text-grey-lighten-1">—</span>
                 </td>
 
+                <!-- Due Time column: editable -->
+                <td class="align-center">
+                  <input
+                    type="datetime-local"
+                    class="draft-input"
+                    :value="isoToLocalDateTime(todo.dueTime || '')"
+                    :disabled="todo.status === 'done'"
+                    @change="updateDueTime(todo.id, ($event.target as HTMLInputElement).value)"
+                  />
+                </td>
+
                 <!-- Created Date -->
                 <td class="text-caption text-grey align-center">
                   {{ formatCreated(todo.createdAt) }}
@@ -1294,7 +1527,7 @@ function fileToBase64Payload(file: File) {
               </tr>
 
               <tr v-if="expandedTodoIds.has(todo.id) && todo.progressLogs.length" class="progress-accordion-row">
-                <td colspan="8" class="pa-0">
+                <td :colspan="TABLE_COLUMN_COUNT" class="pa-0">
                   <div class="progress-history px-4 py-3">
                     <div class="text-caption font-weight-bold text-grey mb-2">處理紀錄</div>
                     <div
@@ -1311,7 +1544,7 @@ function fileToBase64Payload(file: File) {
               </template>
 
               <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
-                <td colspan="8" class="text-center py-10 text-grey-darken-1">
+                <td :colspan="TABLE_COLUMN_COUNT" class="text-center py-10 text-grey-darken-1">
                   <v-icon icon="mdi-playlist-remove" size="48" color="muted" class="mb-2"></v-icon>
                   <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
                   <div class="text-caption text-grey">試試看點選右上角的「手動新增」或截圖貼上吧！</div>
@@ -1359,7 +1592,6 @@ function fileToBase64Payload(file: File) {
             </v-btn>
           </div>
 
-          <template v-if="false">
           <v-divider class="my-2"></v-divider>
 
           <!-- Auto scan interval -->
@@ -1384,7 +1616,26 @@ function fileToBase64Payload(file: File) {
           </div>
 
           <v-divider class="my-2"></v-divider>
-          </template>
+
+          <!-- Web Push notifications -->
+          <div>
+            <div class="text-subtitle-2 font-weight-bold mb-2 text-grey-darken-3">到期提醒</div>
+            <v-switch
+              :model-value="webPushEnabled"
+              color="primary"
+              hide-details
+              density="compact"
+              :loading="webPushBusy"
+              :disabled="webPushBusy"
+              label="啟用瀏覽器通知"
+              @update:model-value="(v) => (v ? enableWebPush() : disableWebPush())"
+            ></v-switch>
+            <div class="text-caption text-grey-darken-1 mt-1">
+              到期前 1 天與 1 小時會自動提醒；若已透過 LINE 登入，也會同時收到 LINE 訊息推播。
+            </div>
+          </div>
+
+          <v-divider class="my-2"></v-divider>
 
           <!-- System note -->
           <v-alert
@@ -1433,6 +1684,13 @@ function fileToBase64Payload(file: File) {
               required
               autofocus
               :rules="[v => !!v || '任務名稱為必填']"
+            ></v-text-field>
+            <v-text-field
+              v-model="newDueTimeLocal"
+              type="datetime-local"
+              label="到期時間 (選填)"
+              variant="outlined"
+              density="comfortable"
             ></v-text-field>
           </v-card-text>
           
@@ -1542,6 +1800,7 @@ function fileToBase64Payload(file: File) {
         </v-card-actions>
       </v-card>
     </v-dialog>
+    </template>
   </v-app>
 </template>
 
