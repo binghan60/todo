@@ -13,6 +13,7 @@ type Todo = {
   id: string
   title: string
   status: TodoStatus
+  isImportant: boolean
   createdAt: string
   progressLogs: ProgressLog[]
   closedAt?: string
@@ -101,6 +102,7 @@ const statusColumns: Array<{ id: TodoStatus; label: string; hint: string; icon: 
 ]
 
 const todos = ref<Todo[]>([])
+const importanceSavingIds = ref<Set<string>>(new Set())
 const processedKeys = ref<Set<string>>(new Set())
 const directoryHandle = ref<BrowserDirectoryHandle | null>(null)
 const directoryName = ref('尚未選擇資料夾')
@@ -134,7 +136,7 @@ const selectedEditTodo = computed(() => todos.value.find((item) => item.id === t
 const editTodoForm = ref({ title: '', requester: '', company: '', contact: '', status: 'pending' as TodoStatus })
 
 const searchQuery = ref('')
-const statusFilter = ref<TodoStatus | 'all'>('all')
+const statusFilter = ref<TodoStatus | 'all' | 'important'>('all')
 const analyzingItems = ref<Array<{ id: string; name: string }>>([])
 const draftQueue = ref<DraftItem[]>([])
 const previewImageUrl = ref<string | null>(null)
@@ -158,6 +160,7 @@ const totalCount = computed(() => todos.value.length)
 const doneCount = computed(() => countByStatus('done'))
 const inProgressCount = computed(() => countByStatus('in_progress'))
 const pendingCount = computed(() => countByStatus('pending'))
+const importantCount = computed(() => todos.value.filter(isPinnedTodo).length)
 
 onMounted(() => {
   void bootstrap()
@@ -351,7 +354,7 @@ async function loadLocalPreferences() {
   }
 
   const storedStatusFilter = localStorage.getItem(STATUS_FILTER_KEY)
-  if (storedStatusFilter === 'all' || storedStatusFilter === 'pending' || storedStatusFilter === 'in_progress' || storedStatusFilter === 'done') {
+  if (storedStatusFilter === 'all' || storedStatusFilter === 'important' || storedStatusFilter === 'pending' || storedStatusFilter === 'in_progress' || storedStatusFilter === 'done') {
     statusFilter.value = storedStatusFilter
   }
 
@@ -406,6 +409,25 @@ async function patchTodo(todoId: string, body: Record<string, unknown>) {
   }
 
   return (await response.json()) as Todo
+}
+
+async function toggleTodoImportance(todo: Todo) {
+  if (importanceSavingIds.value.has(todo.id)) return
+
+  importanceSavingIds.value.add(todo.id)
+  apiError.value = ''
+  try {
+    const updated = await patchTodo(todo.id, { isImportant: !todo.isImportant })
+    applyUpdatedTodo(updated)
+  } catch (error) {
+    apiError.value = error instanceof Error ? error.message : '更新重要標記失敗'
+  } finally {
+    importanceSavingIds.value.delete(todo.id)
+  }
+}
+
+function isPinnedTodo(todo: Todo) {
+  return todo.isImportant === true && todo.status !== 'done'
 }
 
 // Ensure database handles are initialized properly
@@ -925,10 +947,10 @@ const sortedTodos = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
 
   return todos.value
-    .filter((todo) => statusFilter.value === 'all' || todo.status === statusFilter.value)
+    .filter((todo) => statusFilter.value === 'important' ? isPinnedTodo(todo) : statusFilter.value === 'all' || todo.status === statusFilter.value)
     .filter((todo) => !query || searchableTodoText(todo).includes(query))
     .slice()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => Number(isPinnedTodo(b)) - Number(isPinnedTodo(a)) || b.createdAt.localeCompare(a.createdAt))
 })
 
 function searchableTodoText(todo: Todo) {
@@ -1200,6 +1222,10 @@ function fileToBase64Payload(file: File) {
             <v-card-text class="task-toolbar d-flex flex-wrap align-center justify-space-between gap-4 border-b py-3 px-4">
               <v-tabs v-model="statusFilter" color="primary" density="comfortable" class="custom-tabs toolbar-tabs">
                 <v-tab value="all"> 全部 ({{ totalCount }}) </v-tab>
+                <v-tab value="important">
+                  <v-icon icon="mdi-star" class="mr-1 todo-important-star" size="small"></v-icon>
+                  重要 ({{ importantCount }})
+                </v-tab>
                 <v-tab v-for="column in statusColumns" :key="column.id" :value="column.id">
                   <v-icon :icon="column.icon" class="mr-1 text-muted-icon" size="small"></v-icon>
                   {{ column.label }} ({{ countByStatus(column.id) }})
@@ -1326,9 +1352,28 @@ function fileToBase64Payload(file: File) {
 
                     <!-- Title column -->
                     <td class="font-weight-bold text-body-2 align-center">
-                      <span :class="{ 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
-                        {{ todo.title }}
-                      </span>
+                      <div class="todo-title-line">
+                        <v-tooltip :text="todo.isImportant ? '取消重要' : '標示為重要'" location="top">
+                          <template v-slot:activator="{ props }">
+                            <v-btn
+                              v-bind="props"
+                              :icon="todo.isImportant ? 'mdi-star' : 'mdi-star-outline'"
+                              variant="text"
+                              size="small"
+                              class="todo-importance-button"
+                              :class="{ 'todo-important-star': isPinnedTodo(todo) }"
+                              :aria-label="todo.isImportant ? '取消重要' : '標示為重要'"
+                              :aria-pressed="todo.isImportant === true"
+                              :loading="importanceSavingIds.has(todo.id)"
+                              :disabled="importanceSavingIds.has(todo.id)"
+                              @click.stop="toggleTodoImportance(todo)"
+                            ></v-btn>
+                          </template>
+                        </v-tooltip>
+                        <span class="todo-title-text" :class="{ 'todo-important-title': isPinnedTodo(todo), 'text-decoration-line-through text-grey-darken-1': todo.status === 'done' }">
+                          {{ todo.title }}
+                        </span>
+                      </div>
                       <div v-if="latestProgress(todo)" class="latest-progress mt-1 latest-progress-toggle" @click="toggleTodoExpand(todo.id)">
                         <v-icon :icon="expandedTodoIds.has(todo.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'" size="14" class="mr-1 text-muted-icon"></v-icon>
                         <span class="text-truncate">{{ latestProgress(todo)?.content }}</span>
@@ -1414,8 +1459,8 @@ function fileToBase64Payload(file: File) {
                 <tr v-if="sortedTodos.length === 0 && draftQueue.length === 0">
                   <td :colspan="TABLE_COLUMN_COUNT" class="text-center py-10 text-grey-darken-1">
                     <v-icon icon="mdi-playlist-remove" size="48" color="muted" class="mb-2"></v-icon>
-                    <div class="text-subtitle-1 font-weight-bold">目前沒有任何任務</div>
-                    <div class="text-caption text-grey">試試看點選右上角的「手動新增」或截圖貼上吧！</div>
+                    <div class="text-subtitle-1 font-weight-bold">{{ statusFilter === 'important' ? '目前沒有符合條件的重要任務' : '目前沒有任何任務' }}</div>
+                    <div class="text-caption text-grey">{{ statusFilter === 'important' ? '可在其他分頁點擊任務旁的星號，將未結案任務標示為重要；若有搜尋文字，也可試著清除。' : '試試看點選右上角的「手動新增」或截圖貼上吧！' }}</div>
                   </td>
                 </tr>
               </tbody>
@@ -1821,6 +1866,31 @@ body {
 
 .row-done {
   opacity: 0.75;
+}
+
+.todo-title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.todo-importance-button {
+  flex: 0 0 auto;
+  color: #9a8a7c;
+}
+
+.todo-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.todo-important-star,
+.todo-important-title {
+  color: #c62828;
+}
+
+.todo-important-title {
+  font-weight: 800;
 }
 
 .draft-input-wrap {

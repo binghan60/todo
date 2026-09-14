@@ -5,7 +5,7 @@ import { todos } from "../db.mjs";
 
 export const todosRouter = Router();
 
-const EDITABLE_FIELDS = ["title", "status", "closedAt", "requester", "company", "contact"];
+const EDITABLE_FIELDS = ["title", "status", "closedAt", "requester", "company", "contact", "isImportant"];
 
 todosRouter.get("/", async (req, res) => {
   const items = await todos()
@@ -17,11 +17,16 @@ todosRouter.get("/", async (req, res) => {
 });
 
 todosRouter.post("/", async (req, res) => {
-  const { title, sourceImage, requester, company, contact } = req.body ?? {};
+  const { title, sourceImage, requester, company, contact, isImportant = false } = req.body ?? {};
   const trimmedTitle = typeof title === "string" ? title.trim() : "";
 
   if (!trimmedTitle) {
     res.status(400).json({ error: "任務名稱為必填" });
+    return;
+  }
+
+  if (typeof isImportant !== "boolean") {
+    res.status(400).json({ error: "重要標記必須為布林值" });
     return;
   }
 
@@ -30,6 +35,7 @@ todosRouter.post("/", async (req, res) => {
     userId: req.userId,
     title: trimmedTitle,
     status: "pending",
+    isImportant,
     createdAt: now,
     progressLogs: [],
     sourceImage: sourceImage || "",
@@ -46,6 +52,11 @@ todosRouter.patch("/:id", async (req, res) => {
   const filter = await findOwnedTodo(req);
   if (!filter) {
     res.status(404).json({ error: "找不到這筆待辦" });
+    return;
+  }
+
+  if ("isImportant" in (req.body ?? {}) && typeof req.body.isImportant !== "boolean") {
+    res.status(400).json({ error: "重要標記必須為布林值" });
     return;
   }
 
@@ -102,6 +113,7 @@ function toClientTodo(doc) {
     id: doc._id.toString(),
     title: doc.title,
     status: doc.status,
+    isImportant: doc.isImportant === true,
     createdAt: doc.createdAt,
     closedAt: doc.closedAt || undefined,
     sourceImage: doc.sourceImage || undefined,
