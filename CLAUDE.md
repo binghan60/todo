@@ -33,6 +33,7 @@
 | `JWT_SECRET` | 簽發登入 session cookie 用 |
 | `LINE_LOGIN_CHANNEL_ID` / `LINE_LOGIN_CHANNEL_SECRET` / `LINE_LOGIN_CALLBACK_URL` | LINE Login channel 設定 |
 | `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | 與 Login channel 同 Provider 的 Messaging API channel，用來推播提醒 |
+| `APP_BASE_URL` | LINE 提醒卡片「打開待辦清單」按鈕的網址（需 https）；未設定時取 `LINE_LOGIN_CALLBACK_URL` 的網域，兩者皆無則不顯示按鈕 |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push 用的 VAPID 金鑰（`npx web-push generate-vapid-keys` 產生） |
 
 ## 資料模型草案（歷史規劃，尚未在目前架構中實作）

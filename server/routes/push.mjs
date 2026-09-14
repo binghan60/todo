@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { pushSubscriptions } from "../db.mjs";
-import { notifyUser } from "../notify.mjs";
+import { pushSubscriptions, todos } from "../db.mjs";
+import { notifyTodoDigest } from "../notify.mjs";
 
 export const pushRouter = Router();
 
@@ -9,7 +9,8 @@ pushRouter.get("/vapid-public-key", (_req, res) => {
 });
 
 pushRouter.post("/test", async (req, res) => {
-  const result = await notifyUser(req.userId, "測試通知", "這是一則測試推播，如果你收到這則訊息，代表推播設定成功！");
+  const userTodos = await todos().find({ userId: req.userId, status: { $ne: "done" } }).toArray();
+  const result = await notifyTodoDigest(req.userId, userTodos);
   res.json(result);
 });
 

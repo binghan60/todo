@@ -2,6 +2,7 @@ import webpush from "web-push";
 import { ObjectId } from "mongodb";
 import { users, pushSubscriptions } from "./db.mjs";
 import { sendLineMessage } from "./linePush.mjs";
+import { buildTodoDigestText, buildTodoFlexMessage } from "./lineFlex.mjs";
 
 let vapidConfigured = false;
 
@@ -16,9 +17,15 @@ export function configureVapid() {
   vapidConfigured = true;
 }
 
-export async function notifyUser(userId, title, message) {
+// Scheduled and manually triggered reminders share exactly the same content.
+export async function notifyTodoDigest(userId, items) {
+  const message = buildTodoDigestText(items);
+  return notifyUser(userId, "待辦提醒", message, { lineMessage: buildTodoFlexMessage(items) });
+}
+
+export async function notifyUser(userId, title, message, { lineMessage = message } = {}) {
   const [lineSent, webPushCount] = await Promise.all([
-    sendLinePushIfLinked(userId, message),
+    sendLinePushIfLinked(userId, lineMessage),
     sendWebPushIfSubscribed(userId, title, message),
   ]);
 
@@ -30,8 +37,7 @@ async function sendLinePushIfLinked(userId, message) {
   if (!user?.lineUserId) return false;
 
   try {
-    await sendLineMessage(user.lineUserId, message);
-    return true;
+    return await sendLineMessage(user.lineUserId, message);
   } catch (error) {
     console.error("LINE 推播失敗:", error);
     return false;

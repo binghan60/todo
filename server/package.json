@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../.env index.mjs",
     "serve": "node --env-file-if-exists=../.env index.mjs",
-    "check": "node --check index.mjs"
+    "check": "node --check index.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

@@ -1,5 +1,5 @@
 import { todos, remindersSent } from "./db.mjs";
-import { configureVapid, notifyUser } from "./notify.mjs";
+import { configureVapid, notifyTodoDigest } from "./notify.mjs";
 
 const POLL_INTERVAL_MS = 10 * 60 * 1000; // 每 10 分鐘掃描一次
 const CHECK_WINDOW_MS = 15 * 60 * 1000; // 視窗要比掃描間隔寬，避免漏掃
@@ -54,9 +54,7 @@ async function maybeSendDigestForUser(userId, userTodos, dateStr) {
     throw error;
   }
 
-  const titles = userTodos.map((todo) => `‧${todo.title}`).join("\n");
-  const message = `早安！你有 ${userTodos.length} 筆還沒結案的待辦事項：\n${titles}`;
-  await notifyUser(userId, "待辦提醒", message);
+  await notifyTodoDigest(userId, userTodos);
 }
 
 function getTaipeiParts() {

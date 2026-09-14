@@ -1,10 +1,10 @@
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
 
-export async function sendLineMessage(lineUserId, text) {
+export async function sendLineMessage(lineUserId, message) {
   const accessToken = process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
   if (!accessToken) {
     console.warn("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN 未設定，略過 LINE 推播");
-    return;
+    return false;
   }
 
   const response = await fetch(LINE_PUSH_URL, {
@@ -15,7 +15,7 @@ export async function sendLineMessage(lineUserId, text) {
     },
     body: JSON.stringify({
       to: lineUserId,
-      messages: [{ type: "text", text }],
+      messages: [typeof message === "string" ? { type: "text", text: message } : message],
     }),
   });
 
@@ -23,4 +23,5 @@ export async function sendLineMessage(lineUserId, text) {
     const body = await response.text();
     throw new Error(`LINE push failed: HTTP ${response.status} ${body}`);
   }
+  return true;
 }
