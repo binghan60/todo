@@ -1020,16 +1020,23 @@ function createImageKey(file: File) {
   return `${file.name}:${file.lastModified}:${file.size}`
 }
 
-function fileToBase64Payload(file: File) {
-  return new Promise<{ mimeType: string; base64: string }>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '')
-      resolve({ mimeType: file.type || 'image/png', base64: dataUrl.split(',')[1] ?? dataUrl })
-    }
-    reader.onerror = () => reject(new Error('圖片讀取失敗'))
-    reader.readAsDataURL(file)
-  })
+// Vercel 請求上限約 4.5MB，所以上傳前先縮圖壓縮（辨識文字用不到原始大小）
+const MAX_UPLOAD_EDGE = 2000
+
+async function fileToBase64Payload(file: File) {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, MAX_UPLOAD_EDGE / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+    return { mimeType: 'image/jpeg', base64: dataUrl.split(',')[1] ?? dataUrl }
+  } catch {
+    throw new Error('圖片讀取失敗')
+  }
 }
 </script>
 

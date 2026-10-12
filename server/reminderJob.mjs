@@ -15,12 +15,14 @@ export function startReminderJob() {
   console.log("Reminder job started");
 }
 
-async function runOnce() {
+// force=true 給 Vercel Cron 用：Cron 觸發時間不精準，略過時間視窗，靠每日去重避免重複發送
+export async function runOnce({ force = false } = {}) {
+  configureVapid();
   const { dateStr, minutesSinceMidnight } = getTaipeiParts();
   const isWithinWindow =
     minutesSinceMidnight >= DAILY_DIGEST_MINUTES_SINCE_MIDNIGHT &&
     minutesSinceMidnight < DAILY_DIGEST_MINUTES_SINCE_MIDNIGHT + CHECK_WINDOW_MS / 60000;
-  if (!isWithinWindow) return;
+  if (!force && !isWithinWindow) return;
 
   const pendingTodos = await todos()
     .find({ status: { $ne: "done" } })

@@ -3,7 +3,19 @@ import { MongoClient } from "mongodb";
 let client;
 let db;
 
-export async function connectDb() {
+let connecting;
+
+// 可重複呼叫：已連線就直接回傳，Serverless 暖機的實例會重用同一條連線
+export function connectDb() {
+  if (db) return Promise.resolve(db);
+  connecting ??= doConnect().catch((error) => {
+    connecting = undefined;
+    throw error;
+  });
+  return connecting;
+}
+
+async function doConnect() {
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error("MONGODB_URI is not set");
 
